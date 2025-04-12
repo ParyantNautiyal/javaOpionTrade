@@ -3,6 +3,7 @@ package com.optiontrading.di;
 import com.google.inject.AbstractModule;
 import com.google.inject.Singleton;
 
+import com.optiontrading.config.ConfigurationManager;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.CacheManager;
 import com.optiontrading.resources.ResourceManager;
@@ -29,6 +30,9 @@ public class AppModule extends AbstractModule {
 
     @Override
     protected void configure() {
+        // Configuration
+        bind(ConfigurationManager.class).in(Singleton.class);
+
         // Resource bindings - all now using DI
         bind(ThreadManager.class).in(Singleton.class);
         bind(TimerManager.class).in(Singleton.class);

@@ -7,6 +7,7 @@ import com.optiontrading.resources.TimerManager;
 import com.optiontrading.service.api.TradingApiClient;
 import com.google.inject.Inject;
 import com.optiontrading.events.PriceUpdateEvent;
+import com.optiontrading.config.ConfigurationManager;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -20,7 +21,7 @@ import java.util.logging.Logger;
 public class MarketDataProvider implements MarketDataService {
     private static final Logger LOGGER = Logger.getLogger(MarketDataProvider.class.getName());
 
-    // Default update interval - 5 seconds
+    // Default update interval - 5 seconds (will be overridden from config)
     private static final int DEFAULT_UPDATE_INTERVAL = 5000;
 
     // Batch size for API calls
@@ -47,6 +48,12 @@ public class MarketDataProvider implements MarketDataService {
     // Trading API client
     private final TradingApiClient tradingApiClient;
 
+    // Configuration manager
+    private final ConfigurationManager configManager;
+
+    // Actual update interval to use (from config)
+    private final int quoteUpdateInterval;
+
     /**
      * Constructor with dependency injection
      * 
@@ -55,12 +62,35 @@ public class MarketDataProvider implements MarketDataService {
      * @param timerManager     the timer manager
      */
     @Inject
-    public MarketDataProvider(TradingApiClient tradingApiClient, EventBus eventBus, TimerManager timerManager) {
+    public MarketDataProvider(TradingApiClient tradingApiClient, EventBus eventBus,
+            TimerManager timerManager, ConfigurationManager configManager) {
         this.tradingApiClient = tradingApiClient;
         this.eventBus = eventBus;
         this.timerManager = timerManager;
+        this.configManager = configManager;
 
-        LOGGER.info("Initialized MarketDataProvider with dependency injection");
+        // Get quote update interval from config
+        this.quoteUpdateInterval = configManager.getInt("market.data.update.interval", DEFAULT_UPDATE_INTERVAL);
+
+        LOGGER.info("Initialized MarketDataProvider with update interval of " + quoteUpdateInterval + "ms");
+
+        // Start the update timer
+        startUpdateTimer();
+    }
+
+    /**
+     * Start the price update timer
+     */
+    private void startUpdateTimer() {
+        if (updateTimer != null) {
+            updateTimer.cancel();
+        }
+
+        updateTimer = timerManager.createTimer(true);
+        updateTimer.scheduleAtFixedRate(new PriceUpdateTask(), 1000, quoteUpdateInterval); // Start after 1 second, then
+                                                                                           // use configured interval
+
+        LOGGER.info("Started price update timer with interval of " + quoteUpdateInterval + "ms");
     }
 
     /**
@@ -70,13 +100,9 @@ public class MarketDataProvider implements MarketDataService {
     public void start() {
         LOGGER.info("Starting MarketDataProvider");
 
-        // Start update timer if not already running and if timer manager is available
-        if (updateTimer == null && timerManager != null) {
-            updateTimer = timerManager.createTimer("MarketData-Updater", true);
-            updateTimer.scheduleAtFixedRate(new PriceUpdateTask(), 0, DEFAULT_UPDATE_INTERVAL);
-            LOGGER.info("Started price update timer with interval: " + DEFAULT_UPDATE_INTERVAL + "ms");
-        } else if (timerManager == null) {
-            LOGGER.warning("Could not start MarketDataProvider - TimerManager not available");
+        // Start update timer if not already running
+        if (updateTimer == null) {
+            startUpdateTimer();
         }
     }
 

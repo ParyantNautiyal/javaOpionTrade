@@ -20,14 +20,31 @@ import com.optiontrading.ui.OrderEntryUI;
 
 import java.io.File;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Scanner;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.logging.ConsoleHandler;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
+import java.util.stream.Collectors;
+
+import com.optiontrading.service.model.Instrument;
+import com.optiontrading.service.model.OrderType;
+import com.optiontrading.service.model.OptionType;
+import com.optiontrading.service.model.ScheduledOrder;
+import com.optiontrading.service.model.OrderScheduleParams;
+import com.optiontrading.service.instrument.InstrumentService;
+
+import java.util.ArrayList;
+import java.util.Objects;
 
 /**
  * Main entry point for the Option Trading application.
@@ -75,21 +92,46 @@ public class Main {
     public void start() {
         try {
             LOGGER.info("Resource manager initialized");
-
             LOGGER.info("Application context initialized");
 
             // Setup event subscribers
             setupEventSubscribers(eventBus);
 
             // Ensure Kite API authentication with interactive mode
+            System.out.println("\n===== CHECKING AUTHENTICATION =====");
+            System.out.println("Checking for saved Kite API credentials and tokens...");
+            System.out.println("You may need to enter your API key and request token if not found.");
             boolean authenticated = appContext.ensureAuthenticated();
+
             if (!authenticated) {
-                LOGGER.severe("Failed to authenticate with Kite API even after interactive mode, exiting application");
-                System.exit(1);
+                LOGGER.severe("Failed to authenticate with Kite API even after interactive mode");
+                System.out.println("\n===== AUTHENTICATION FAILED =====");
+                System.out.println(
+                        "Could not authenticate with Kite API. The application will continue in limited mode.");
+                System.out.println("You can retry authentication from the main menu.");
+
+                // Wait for user acknowledgment
+                System.out.println("\nPress Enter to continue...");
+                new Scanner(System.in).nextLine();
+
+                // Show console menu without starting authenticated services
+                showConsoleMenu(appContext);
+
+                // Exit application
+                LOGGER.info("Shutting down application");
+                appContext.shutdown();
+                resourceManager.shutdown();
+
+                return;
             }
 
+            System.out.println("\n===== AUTHENTICATION SUCCESSFUL =====");
             // Start authenticated services
+            System.out.println("Starting services...");
             appContext.startAuthenticatedServices();
+
+            // Print current index prices
+            printCurrentIndexPrices();
 
             // Start resource monitoring with Guice
             ResourceMonitor resourceMonitor = Guice.createInjector(new AppModule()).getInstance(ResourceMonitor.class);
@@ -97,6 +139,7 @@ public class Main {
             LOGGER.info("Resource monitoring started with 30-second interval");
 
             LOGGER.info("Application started successfully");
+            System.out.println("Application started successfully!");
 
             // Clear the console
             clearConsole();
@@ -109,6 +152,10 @@ public class Main {
             appContext.shutdown();
             resourceManager.shutdown();
             resourceMonitor.stopMonitoring();
+
+            // Ensure application exits completely
+            LOGGER.info("Application shutdown complete. Exiting.");
+            System.exit(0);
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error in application startup", e);
@@ -171,8 +218,9 @@ public class Main {
             System.out.println("2. View Existing Orders");
             System.out.println("3. View Resource Metrics");
             System.out.println("4. Re-authenticate with Kite API");
-            System.out.println("5. Exit");
-            System.out.print("Enter your choice (1-5): ");
+            System.out.println("5. Refresh Instruments (Download Latest)");
+            System.out.println("6. Exit");
+            System.out.print("Enter your choice (1-6): ");
 
             try {
                 String input = scanner.nextLine().trim();
@@ -188,8 +236,8 @@ public class Main {
 
                 switch (choice) {
                     case 1:
-                        // Show order entry UI
-                        OrderEntryUI.showOrderEntryUI();
+                        // Console-based order creation with selectable options
+                        createOrderWithConsoleUI(scanner, appContext);
                         break;
 
                     case 2:
@@ -208,13 +256,18 @@ public class Main {
                         break;
 
                     case 5:
+                        // Refresh instruments
+                        refreshInstruments(scanner, appContext);
+                        break;
+
+                    case 6:
                         // Exit
                         System.out.println("Exiting Option Trading System...");
                         shutdownRequested.set(true);
                         break;
 
                     default:
-                        System.out.println("Invalid choice. Please enter a number between 1 and 5.");
+                        System.out.println("Invalid choice. Please enter a number between 1 and 6.");
                 }
             } catch (NumberFormatException e) {
                 System.out.println("Invalid input. Please enter a number.");
@@ -245,20 +298,35 @@ public class Main {
      */
     private static void handleReauthentication(ApplicationContext appContext) {
         try {
+            clearConsole();
             System.out.println("\n===== RE-AUTHENTICATION =====");
+            System.out.println("Starting re-authentication process with Kite API.");
+            System.out.println("You'll need your Kite API credentials and access to a web browser.");
+            System.out.println("Press Enter to continue or Ctrl+C to cancel...");
+            new Scanner(System.in).nextLine();
 
-            // Use the new method in ApplicationContext for re-authentication
+            // Use the method in ApplicationContext for re-authentication
             boolean success = appContext.reAuthenticateAndRestartServices();
 
             if (success) {
-                System.out.println("Re-authentication and service restart successful!");
+                System.out.println("\nRe-authentication and service restart successful!");
+                System.out.println("You now have full access to all trading features.");
             } else {
-                System.out.println("Re-authentication failed or service restart failed.");
+                System.out.println("\nRe-authentication failed or service restart failed.");
+                System.out.println("The application will continue in limited mode.");
+                System.out.println("You can try again later from the main menu.");
             }
 
+            System.out.println("\nPress Enter to return to the main menu...");
+            new Scanner(System.in).nextLine();
+
         } catch (Exception e) {
-            System.out.println("Error during re-authentication: " + e.getMessage());
+            System.out.println("\nError during re-authentication: " + e.getMessage());
+            System.out.println("Please try again later.");
             LOGGER.log(Level.WARNING, "Error during re-authentication", e);
+
+            System.out.println("\nPress Enter to return to the main menu...");
+            new Scanner(System.in).nextLine();
         }
     }
 
@@ -326,5 +394,270 @@ public class Main {
                         " Status: " + event.getStatus());
             }
         });
+    }
+
+    /**
+     * Console-based order creation with selectable options
+     */
+    private static void createOrderWithConsoleUI(Scanner scanner, ApplicationContext appContext) {
+        try {
+            clearConsole();
+            System.out.println("\n===== CREATE NEW ORDER =====");
+
+            // Get required services
+            InstrumentService instrumentService = appContext.getService(InstrumentService.class);
+            OrderRepository orderRepository = appContext.getService(OrderRepository.class);
+
+            // Ensure instruments are loaded
+            if (instrumentService.getAllInstruments().isEmpty()) {
+                System.out.println("Loading instruments... Please wait.");
+                instrumentService.refreshInstruments(false);
+            }
+
+            // 1. SELECT INDEX
+            List<String> availableIndices = new ArrayList<>(instrumentService.loadAvailableSymbols());
+            if (availableIndices.size() < 3) {
+                // Ensure we have at least 3 options by adding defaults if needed
+                if (!availableIndices.contains("NIFTY"))
+                    availableIndices.add("NIFTY");
+                if (!availableIndices.contains("BANKNIFTY"))
+                    availableIndices.add("BANKNIFTY");
+                if (!availableIndices.contains("FINNIFTY"))
+                    availableIndices.add("FINNIFTY");
+            }
+
+            System.out.println("\nSelect Index:");
+            for (int i = 0; i < availableIndices.size(); i++) {
+                System.out.println((i + 1) + ". " + availableIndices.get(i));
+            }
+            System.out.print("Enter your choice (1-" + availableIndices.size() + "): ");
+            int indexChoice = Integer.parseInt(scanner.nextLine().trim());
+            String selectedIndex = availableIndices.get(indexChoice - 1);
+            System.out.println("Selected index: " + selectedIndex);
+
+            // 2. SELECT EXPIRY DATE
+            List<LocalDate> availableExpiries = new ArrayList<>(instrumentService.loadAvailableExpiries(selectedIndex));
+            if (availableExpiries.isEmpty()) {
+                System.out.println("No expiry dates found for " + selectedIndex);
+                System.out.println("Please refresh instruments first using option 6 from the main menu.");
+                return;
+            }
+
+            System.out.println("\n--- SELECT EXPIRY DATE ---");
+            for (int i = 0; i < availableExpiries.size(); i++) {
+                System.out.println((i + 1) + ". "
+                        + availableExpiries.get(i).format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
+            }
+            System.out.print("Enter your choice (1-" + availableExpiries.size() + "): ");
+            int expiryChoice = Integer.parseInt(scanner.nextLine().trim());
+            LocalDate selectedExpiry = availableExpiries.get(expiryChoice - 1);
+            System.out.println(
+                    "Selected expiry: " + selectedExpiry.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
+
+            // 3. SELECT ORDER TYPE
+            System.out.println("\nSelect Order Type:");
+            System.out.println("1. BUY");
+            System.out.println("2. SELL");
+            System.out.print("Enter your choice (1-2): ");
+            int orderTypeChoice = Integer.parseInt(scanner.nextLine().trim());
+            OrderType selectedOrderType = (orderTypeChoice == 1) ? OrderType.BUY : OrderType.SELL;
+            System.out.println("Selected order type: " + selectedOrderType);
+
+            // 4. SELECT STRIKE PRICE
+            List<Instrument> instruments = instrumentService.loadInstrumentsForSymbolAndExpiry(selectedIndex,
+                    selectedExpiry);
+            List<BigDecimal> availableStrikes = new ArrayList<>(instruments.stream()
+                    .map(Instrument::getStrikePrice)
+                    .filter(Objects::nonNull) // Filter out null strike prices
+                    .distinct()
+                    .sorted()
+                    .collect(Collectors.toList()));
+
+            if (availableStrikes.isEmpty()) {
+                // If no strikes are available, add some defaults
+                BigDecimal baseStrike = new BigDecimal("18000.00");
+                availableStrikes.add(baseStrike);
+                availableStrikes.add(baseStrike.add(new BigDecimal("500.00")));
+                availableStrikes.add(baseStrike.add(new BigDecimal("1000.00")));
+            }
+
+            System.out.println("\nSelect Strike Price:");
+            for (int i = 0; i < availableStrikes.size(); i++) {
+                System.out.println((i + 1) + ". " + availableStrikes.get(i));
+            }
+            System.out.print("Enter your choice (1-" + availableStrikes.size() + "): ");
+            int strikeChoice = Integer.parseInt(scanner.nextLine().trim());
+            BigDecimal selectedStrike = availableStrikes.get(strikeChoice - 1);
+            System.out.println("Selected strike price: " + selectedStrike);
+
+            // 5. ENTER QUANTITY (LOTS)
+            System.out.print("\nEnter Quantity (Lots): ");
+            int quantity = Integer.parseInt(scanner.nextLine().trim());
+
+            // 6. ENTER PRICE
+            System.out.print("\nEnter Price (or 0 for market price): ");
+            BigDecimal price = new BigDecimal(scanner.nextLine().trim());
+
+            // 7. SELECT EXECUTION TIME (HOUR AND MINUTE SEPARATELY)
+            LocalTime currentTime = LocalTime.now();
+
+            System.out.println("\nSelect Execution Hour (0-23):");
+            for (int i = 0; i < 24; i++) {
+                if (i % 6 == 0)
+                    System.out.println();
+                System.out.print(String.format("%02d", i) + " ");
+            }
+            System.out.print("\nEnter hour: ");
+            int hour = Integer.parseInt(scanner.nextLine().trim());
+
+            System.out.println("\nSelect Execution Minute (0-59):");
+            for (int i = 0; i < 60; i += 5) {
+                if (i % 30 == 0)
+                    System.out.println();
+                System.out.print(String.format("%02d", i) + " ");
+            }
+            System.out.print("\nEnter minute: ");
+            int minute = Integer.parseInt(scanner.nextLine().trim());
+
+            LocalTime executionTime = LocalTime.of(hour, minute);
+            LocalDateTime executionDateTime = LocalDateTime.of(LocalDate.now(), executionTime);
+
+            // If time is in the past for today, assume tomorrow
+            if (executionDateTime.isBefore(LocalDateTime.now())) {
+                executionDateTime = executionDateTime.plusDays(1);
+            }
+
+            // 8. ADDITIONAL OPTIONS
+            System.out.println("\nEnable Stop Loss? (y/n): ");
+            boolean stopLossEnabled = scanner.nextLine().trim().equalsIgnoreCase("y");
+
+            System.out.println("Enable Hedging? (y/n): ");
+            boolean hedgingEnabled = scanner.nextLine().trim().equalsIgnoreCase("y");
+
+            int hedgePointDifference = 0;
+            if (hedgingEnabled) {
+                System.out.print("Enter Hedge Point Difference: ");
+                hedgePointDifference = Integer.parseInt(scanner.nextLine().trim());
+            }
+
+            // 9. CREATE ORDER
+            OrderScheduleParams params = OrderScheduleParams.builder()
+                    .indexSymbol(selectedIndex)
+                    .expiryDate(selectedExpiry)
+                    .targetPremium(price)
+                    .lots(quantity)
+                    .executionTime(executionDateTime)
+                    .threshold(5.0) // Default threshold
+                    .orderType(selectedOrderType)
+                    .stopLossEnabled(stopLossEnabled)
+                    .hedgingEnabled(hedgingEnabled)
+                    .hedgePointDifference(hedgePointDifference)
+                    .build();
+
+            // Create the order using the repository
+            ScheduledOrder order = orderRepository.createOrder(params);
+
+            // Show confirmation
+            System.out.println("\n===== ORDER CONFIRMATION =====");
+            System.out.println("Order ID: " + order.getOrderId());
+            System.out.println("Index: " + selectedIndex);
+            System.out.println("Expiry: " + selectedExpiry.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
+            System.out.println("Order Type: " + selectedOrderType);
+            System.out.println("Strike Price: " + selectedStrike);
+            System.out.println("Quantity: " + quantity + " lots");
+            System.out.println("Price: " + price);
+            System.out.println(
+                    "Execution Time: " + executionDateTime.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss")));
+            System.out.println("Stop Loss Enabled: " + stopLossEnabled);
+            System.out.println("Hedging Enabled: " + hedgingEnabled);
+            if (hedgingEnabled) {
+                System.out.println("Hedge Point Difference: " + hedgePointDifference);
+            }
+
+        } catch (Exception e) {
+            System.out.println("Error creating order: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "Error in order creation", e);
+        }
+    }
+
+    /**
+     * Print current index prices on startup
+     */
+    private void printCurrentIndexPrices() {
+        try {
+            // Get services from Guice
+            InstrumentService instrumentService = appContext.getService(InstrumentService.class);
+            MarketDataService marketDataService = appContext.getService(MarketDataService.class);
+
+            // Wait a moment for prices to be fetched
+            System.out.println("\n===== CURRENT INDEX PRICES =====");
+            System.out.println("Fetching current index prices...");
+
+            // Check if data/instruments directory exists and has content
+            File instrumentsDir = new File("data/instruments");
+            File metadataFile = new File("data/instruments/metadata.properties");
+
+            if (!instrumentsDir.exists() || !instrumentsDir.isDirectory() ||
+                    instrumentsDir.list() == null || instrumentsDir.list().length == 0 ||
+                    !metadataFile.exists()) {
+                // First time startup - need to download instruments
+                System.out.println("No instrument data found. Downloading instruments...");
+                instrumentService.refreshInstrumentsAndSaveToFiles();
+                System.out.println("Instruments downloaded successfully.");
+            } else {
+                // Use cached data
+                System.out.println("Using cached instrument data. Use menu option to refresh if needed.");
+
+                // Make sure we have instruments loaded in memory
+                if (instrumentService.getAllInstruments().isEmpty()) {
+                    instrumentService.logCurrentExpiryDates();
+                }
+            }
+
+            // Get index prices
+            BigDecimal niftyPrice = instrumentService.getIndexSpotPrice("NIFTY");
+            BigDecimal sensexPrice = instrumentService.getIndexSpotPrice("SENSEX");
+            BigDecimal bankexPrice = instrumentService.getIndexSpotPrice("BANKEX");
+
+            // Print the prices
+            System.out.println("NIFTY: " + (niftyPrice != null ? niftyPrice : "Not available"));
+            System.out.println("SENSEX: " + (sensexPrice != null ? sensexPrice : "Not available"));
+            System.out.println("BANKEX: " + (bankexPrice != null ? bankexPrice : "Not available"));
+            System.out.println("===================================");
+
+            // Wait a moment for user to read
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException e) {
+                // Ignore
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error printing index prices", e);
+            System.out.println("Could not fetch index prices: " + e.getMessage());
+        }
+    }
+
+    /**
+     * Refresh instruments (download latest from API)
+     */
+    private static void refreshInstruments(Scanner scanner, ApplicationContext appContext) {
+        System.out.println("\n===== REFRESHING INSTRUMENTS =====");
+        System.out.println("This will download the latest instruments from the API.");
+        System.out.println("This may take a minute or two...");
+
+        try {
+            // Get instrument service
+            InstrumentService instrumentService = appContext.getService(InstrumentService.class);
+
+            // Force refresh instruments and save to files
+            System.out.println("Downloading instruments...");
+            instrumentService.refreshInstrumentsAndSaveToFiles();
+
+            System.out.println("Instruments refreshed successfully!");
+            System.out.println("You can now select from the latest available expiry dates when placing orders.");
+        } catch (Exception e) {
+            System.out.println("Error refreshing instruments: " + e.getMessage());
+            LOGGER.log(Level.WARNING, "Error refreshing instruments", e);
+        }
     }
 }

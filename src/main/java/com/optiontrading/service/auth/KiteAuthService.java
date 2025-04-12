@@ -5,6 +5,8 @@ import com.google.inject.Singleton;
 import com.optiontrading.events.Event;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.ResourceManager;
+import com.zerodhatech.kiteconnect.KiteConnect;
+import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -276,10 +278,24 @@ public class KiteAuthService implements AuthService {
      */
     public String getLoginUrl() {
         String apiKey = getApiKey();
+
+        // Check if API key is null or empty
         if (apiKey == null || apiKey.isEmpty()) {
-            throw new RuntimeException("API key is not set");
+            // Try reloading credentials from file first
+            LOGGER.warning("API key is not set in memory, attempting to reload from file");
+            loadCredentials();
+
+            // Check again after reload
+            apiKey = getApiKey();
+            if (apiKey == null || apiKey.isEmpty()) {
+                LOGGER.severe(
+                        "API key is not set after reload attempt. File may not exist or credentials may not be saved yet.");
+                throw new RuntimeException(
+                        "API key is not set or could not be loaded. Please ensure you've entered valid credentials.");
+            }
         }
 
+        LOGGER.info("Generating login URL with API key: " + apiKey);
         return KITE_LOGIN_URL + "?api_key=" + apiKey + "&v=3";
     }
 
@@ -337,9 +353,19 @@ public class KiteAuthService implements AuthService {
      * @param apiSecret the API secret
      */
     public void setApiCredentials(String apiKey, String apiSecret) {
+        // Update properties
         credentials.setProperty(API_KEY, apiKey);
         credentials.setProperty(API_SECRET, apiSecret);
+
+        // Save to file
         saveCredentials();
+
+        // Update in-memory variables
+        this.apiKey = apiKey;
+        this.apiSecret = apiSecret;
+
+        LOGGER.info("API credentials updated in memory - API Key: " + apiKey + ", Secret: " +
+                (apiSecret != null && apiSecret.length() > 4 ? apiSecret.substring(0, 4) + "***" : "[NOT SET]"));
 
         // Publish event
         eventBus.publishAsync(new ApiCredentialsUpdatedEvent(apiKey));
@@ -406,94 +432,38 @@ public class KiteAuthService implements AuthService {
      * Generate a new access token using the request token
      *
      * @param requestToken the request token received from Kite
-     * @param userId       the user ID
+     * @param userId       the user ID (optional, not used)
      * @return the new access token
      * @throws RuntimeException if generation fails
      */
     public String generateAccessToken(String requestToken, String userId) {
         LOGGER.info("=============== GENERATING ACCESS TOKEN ===============");
-        LOGGER.info("USER ID: " + userId);
         ensureApiCredentialsSet();
 
         try {
-            // Calculate checksum using instance variables
-            LOGGER.info("API KEY FOR CHECKSUM: " + this.apiKey);
-            LOGGER.info("REQUEST TOKEN FOR CHECKSUM: " + requestToken);
-            LOGGER.info("API SECRET LENGTH FOR CHECKSUM: " + (this.apiSecret != null ? this.apiSecret.length() : 0));
+            // Initialize KiteConnect instance
+            KiteConnect kiteConnect = new KiteConnect(this.apiKey);
 
-            String checksum = calculateChecksum(this.apiKey, requestToken, this.apiSecret);
-            LOGGER.info("CALCULATED CHECKSUM: " + checksum);
+            LOGGER.info("USING KITECONNECT LIBRARY FOR TOKEN GENERATION");
+            LOGGER.info("API KEY: " + this.apiKey);
+            LOGGER.info("REQUEST TOKEN: " + requestToken);
 
-            // Prepare request parameters using instance variables
-            Map<String, String> params = new HashMap<>();
-            params.put("api_key", this.apiKey);
-            params.put("request_token", requestToken);
-            params.put("checksum", checksum);
+            // Use the library's method to generate the session
+            com.zerodhatech.models.User user = kiteConnect.generateSession(requestToken, this.apiSecret);
 
-            // Log the parameters being sent
-            LOGGER.info("SENDING TOKEN GENERATION REQUEST WITH PARAMETERS:");
-            LOGGER.info("  API_KEY: " + this.apiKey);
-            LOGGER.info("  REQUEST_TOKEN: " + requestToken);
-            LOGGER.info("  CHECKSUM: " + checksum);
+            // Extract data from the user object
+            String newAccessToken = user.accessToken;
+            String newPublicToken = user.publicToken;
+            String newUserId = user.userId;
 
-            // Convert params to form data string
-            String requestBody = formDataToString(params);
-
-            LOGGER.info("SENDING REQUEST TO: " + KITE_API_BASE + KITE_SESSION_TOKEN_URL);
-
-            // Make POST request to Kite API
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(KITE_API_BASE + KITE_SESSION_TOKEN_URL))
-                    .header("Content-Type", "application/x-www-form-urlencoded")
-                    .header("X-Kite-Version", "3")
-                    .POST(HttpRequest.BodyPublishers.ofString(requestBody))
-                    .build();
-
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            String jsonResponse = response.body();
-
-            // Check response status code
-            LOGGER.info("RESPONSE STATUS CODE: " + response.statusCode());
-
-            if (response.statusCode() != 200) {
-                LOGGER.severe("ERROR RESPONSE FROM KITE API: " + jsonResponse);
-                throw new RuntimeException("Failed to generate access token. Status: " + response.statusCode()
-                        + ", Body: " + jsonResponse);
-            }
-
-            // Parse JSON response
-            JSONObject jsonObject = new JSONObject(jsonResponse);
-
-            // Check status
-            String status = jsonObject.optString("status");
-            LOGGER.info("RESPONSE STATUS: " + status);
-
-            if (!"success".equals(status)) {
-                String errorMessage = jsonObject.optString("message", "Unknown error");
-                LOGGER.severe("ERROR GENERATING ACCESS TOKEN: " + errorMessage);
-                throw new RuntimeException("Failed to generate access token: " + errorMessage);
-            }
-
-            // Extract tokens and user ID
-            JSONObject data = jsonObject.getJSONObject("data");
-            String newAccessToken = data.getString("access_token");
-            String newPublicToken = data.optString("public_token"); // Can be optional
-            String newUserId = data.getString("user_id");
-
-            LOGGER.info("RECEIVED NEW ACCESS TOKEN: "
-                    + newAccessToken.substring(0, Math.min(5, newAccessToken.length())) + "***");
+            LOGGER.info("RECEIVED NEW ACCESS TOKEN: " +
+                    newAccessToken.substring(0, Math.min(5, newAccessToken.length())) + "***");
             LOGGER.info("RECEIVED USER ID: " + newUserId);
-
-            // Verify user ID matches
-            if (!userId.equals(newUserId)) {
-                LOGGER.warning(
-                        "USER ID MISMATCH - EXPECTED: " + userId + ", RECEIVED: " + newUserId);
-            }
 
             // Update local state
             this.accessToken = newAccessToken;
             this.publicToken = newPublicToken;
-            this.userId = newUserId;
+            this.userId = newUserId; // We store userId but don't compare it
             this.tokenExpiryTime = Instant.now().plusSeconds(TOKEN_VALIDITY_HOURS * 3600);
 
             // Update properties object with new tokens
@@ -506,7 +476,7 @@ public class KiteAuthService implements AuthService {
             // Save tokens to file
             saveTokens();
 
-            LOGGER.info("ACCESS TOKEN GENERATED SUCCESSFULLY FOR USER: " + userId);
+            LOGGER.info("ACCESS TOKEN GENERATED SUCCESSFULLY");
             LOGGER.info("ACCESS TOKEN EXPIRES AT: " + LocalDateTime.ofInstant(tokenExpiryTime, ZoneId.systemDefault()));
             LOGGER.info("=================================================");
 
@@ -514,6 +484,15 @@ public class KiteAuthService implements AuthService {
             eventBus.publish(new AccessTokenGeneratedEvent(newAccessToken));
 
             return newAccessToken;
+        } catch (KiteException e) {
+            LOGGER.log(Level.SEVERE, "KITE API ERROR GENERATING ACCESS TOKEN: " + e.message + " (code: " + e.code + ")",
+                    e);
+            LOGGER.info("=================================================");
+            throw new RuntimeException("Failed to generate access token: " + e.message, e);
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "IO ERROR GENERATING ACCESS TOKEN", e);
+            LOGGER.info("=================================================");
+            throw new RuntimeException("Failed to generate access token: " + e.getMessage(), e);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "ERROR GENERATING ACCESS TOKEN", e);
             LOGGER.info("=================================================");
@@ -689,5 +668,14 @@ public class KiteAuthService implements AuthService {
         eventBus.publishAsync(new ApiCredentialsUpdatedEvent(apiKey));
 
         LOGGER.info("API credentials updated successfully");
+    }
+
+    /**
+     * Reload credentials from file
+     * This is useful when credentials may have been updated externally
+     */
+    public void reloadCredentials() {
+        LOGGER.info("Manually reloading credentials from file");
+        loadCredentials();
     }
 }

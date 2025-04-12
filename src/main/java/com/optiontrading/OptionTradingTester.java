@@ -11,11 +11,16 @@ import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OrderType;
 import com.optiontrading.service.position.PositionWatchlistService;
 import com.optiontrading.service.position.WatchedPosition;
+import com.optiontrading.service.api.TradingApiClient;
+import com.optiontrading.service.instrument.InstrumentService;
 
 import java.math.BigDecimal;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Scanner;
 import java.util.logging.Logger;
+import java.io.File;
 
 /**
  * Main entry point for the option trading test application
@@ -28,6 +33,7 @@ public class OptionTradingTester {
     private final AuthService authService;
     private final MarketDataService marketDataService;
     private final PositionWatchlistService positionWatchlistService;
+    private final TradingApiClient tradingApiClient;
 
     /**
      * Constructor with dependency injection
@@ -36,11 +42,13 @@ public class OptionTradingTester {
     public OptionTradingTester(ResourceManager resourceManager,
             AuthService authService,
             MarketDataService marketDataService,
-            PositionWatchlistService positionWatchlistService) {
+            PositionWatchlistService positionWatchlistService,
+            TradingApiClient tradingApiClient) {
         this.resourceManager = resourceManager;
         this.authService = authService;
         this.marketDataService = marketDataService;
         this.positionWatchlistService = positionWatchlistService;
+        this.tradingApiClient = tradingApiClient;
     }
 
     /**
@@ -69,6 +77,9 @@ public class OptionTradingTester {
         try {
             // Check authentication
             authenticate();
+
+            // Load or download instruments as needed
+            loadInstruments();
 
             // Start market data service
             marketDataService.start();
@@ -141,20 +152,74 @@ public class OptionTradingTester {
     }
 
     /**
+     * Load instruments from cache or download if needed
+     */
+    private void loadInstruments() {
+        System.out.println("\n===== LOADING INSTRUMENTS =====");
+
+        // Get the instrument service using Guice
+        InstrumentService instrumentService = Guice.createInjector(new AppModule())
+                .getInstance(InstrumentService.class);
+
+        // Check if data/instruments directory exists and has content
+        File instrumentsDir = new File("data/instruments");
+        File metadataFile = new File("data/instruments/metadata.properties");
+
+        if (!instrumentsDir.exists() || !instrumentsDir.isDirectory() ||
+                instrumentsDir.list() == null || instrumentsDir.list().length == 0 ||
+                !metadataFile.exists()) {
+            // First time startup - need to download instruments
+            System.out.println("No instrument data found. Downloading instruments...");
+            instrumentService.refreshInstrumentsAndSaveToFiles();
+            System.out.println("Instruments downloaded successfully.");
+        } else {
+            // Use cached data
+            System.out.println("Using cached instrument data from: " + instrumentsDir.getAbsolutePath());
+
+            // Make sure we have instruments loaded in memory
+            if (instrumentService.getAllInstruments().isEmpty()) {
+                instrumentService.logCurrentExpiryDates();
+            }
+        }
+    }
+
+    /**
      * Test market data functionality
      */
     private void testMarketData() {
         System.out.println("\n===== TESTING MARKET DATA =====");
 
-        // Example instrument IDs (NIFTY and BANKNIFTY)
+        // Example instrument IDs for index symbols
         String niftyIndex = "NSE:NIFTY 50";
         String bankNiftyIndex = "NSE:NIFTY BANK";
+        String sensexIndex = "BSE:SENSEX";
 
         try {
+            // First print current actual prices from the market
+            System.out.println("Current Market Prices:");
+
+            // Get prices from the API
+            List<String> indexSymbols = Arrays.asList(niftyIndex, bankNiftyIndex, sensexIndex);
+            Map<String, BigDecimal> actualPrices = tradingApiClient.getLTP(indexSymbols);
+
+            if (actualPrices != null && !actualPrices.isEmpty()) {
+                System.out.println("NIFTY 50: " + actualPrices.getOrDefault(niftyIndex, BigDecimal.ZERO));
+                System.out.println("NIFTY BANK: " + actualPrices.getOrDefault(bankNiftyIndex, BigDecimal.ZERO));
+                System.out.println("SENSEX: " + actualPrices.getOrDefault(sensexIndex, BigDecimal.ZERO));
+            } else {
+                System.out.println("Could not fetch real-time prices from the market.");
+            }
+
+            System.out.println("\nSetting test prices:");
+
             // Update simulated prices for testing using market data service
             marketDataService.updatePriceForTesting(niftyIndex, new BigDecimal("19500.50"));
             marketDataService.updatePriceForTesting(bankNiftyIndex, new BigDecimal("42750.25"));
+            marketDataService.updatePriceForTesting(sensexIndex, new BigDecimal("65200.75"));
 
+            System.out.println("NIFTY 50 (test): 19500.50");
+            System.out.println("NIFTY BANK (test): 42750.25");
+            System.out.println("SENSEX (test): 65200.75");
             System.out.println("Test market data prices set successfully.");
 
             // Refresh positions to propagate new prices

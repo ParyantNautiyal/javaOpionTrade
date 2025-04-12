@@ -46,6 +46,14 @@ public class InstrumentService {
     // Supported exchanges for F&O instruments
     private static final Set<String> SUPPORTED_FNO_EXCHANGES = Set.of("NFO", "BFO");
 
+    // Mapping of index symbol to LTP lookup symbol
+    private static final Map<String, String> INDEX_LTP_SYMBOLS = Map.of(
+            "NIFTY", "NSE:NIFTY 50",
+            "BANKNIFTY", "NSE:NIFTY BANK",
+            "FINNIFTY", "NSE:NIFTY FIN SERVICE",
+            "SENSEX", "BSE:SENSEX",
+            "BANKEX", "BSE:BANKEX");
+
     // Resource managers and services
     private final CacheManager cacheManager;
     private final EventBus eventBus;
@@ -105,6 +113,13 @@ public class InstrumentService {
      * @return the spot price or null if not available
      */
     public BigDecimal getIndexSpotPrice(String indexSymbol) {
+        // First try to get a real-time price
+        BigDecimal realTimePrice = fetchRealTimeIndexSpotPrice(indexSymbol);
+        if (realTimePrice != null) {
+            return realTimePrice;
+        }
+
+        // Fall back to cached price if real-time fetch failed
         return indexSpotPrices.get(indexSymbol.toUpperCase());
     }
 
@@ -162,30 +177,15 @@ public class InstrumentService {
      * Download instruments from the Kite API
      */
     private void downloadInstruments() {
-        LOGGER.info("Downloading only index-related instruments...");
+        LOGGER.info("Downloading only option instruments from futures & options exchanges...");
 
         try {
             // Set of index symbols we're interested in - these are the ONLY ones we care
             // about
             Set<String> targetIndices = Set.of("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX");
 
-            // First download index instruments from NSE to get spot prices
-            LOGGER.info("Downloading indices from NSE...");
-            try {
-                List<Instrument> nseInstruments = tradingApiClient.getInstruments("NSE");
-                int indexCount = 0;
-                for (Instrument instrument : nseInstruments) {
-                    // Only keep the main indices we're interested in
-                    if (instrument.getType() == InstrumentType.INDEX &&
-                            targetIndices.contains(instrument.getTradingSymbol().toUpperCase())) {
-                        instruments.put(instrument.getInstrumentId(), instrument);
-                        indexCount++;
-                    }
-                }
-                LOGGER.info("Downloaded " + indexCount + " index instruments from NSE");
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error downloading index instruments from NSE", e);
-            }
+            // We no longer download NSE index instruments since we'll fetch spot prices
+            // directly
 
             // Download instruments from NFO
             List<Instrument> nfoInstruments = tradingApiClient.getInstruments("NFO");
@@ -213,8 +213,7 @@ public class InstrumentService {
             }
             LOGGER.info("Downloaded " + bfoCount + " index-related instruments from BFO");
 
-            // Get latest index prices
-            updateIndexPrices();
+            // We'll fetch spot prices on demand, so no need to do it here
 
             // Save to cache
             saveInstrumentsToCache();
@@ -229,61 +228,36 @@ public class InstrumentService {
      * Refresh the instrument data from API
      */
     public void refreshInstruments() {
-        // Check if we already have data files and they're not stale
-        if (!areDataFilesStale()) {
-            LOGGER.info("Using existing instrument data files (not stale)");
-            // Add call to log expiry dates even when using cached data
-            logCurrentExpiryDates();
-            return;
-        }
-
+        // Always download fresh data and save to files
         refreshInstrumentsAndSaveToFiles();
     }
 
     /**
      * Refreshes all instruments from the API
+     * 
+     * @param useMockData Ignored parameter, kept for backward compatibility
      */
     public void refreshInstruments(boolean useMockData) {
-        LOGGER.info("Refreshing instruments from API");
-
-        // Clear existing instruments
-        instruments.clear();
-
-        try {
-            downloadInstruments();
-
-            // Filter to keep only index and related instruments
-            filterIndexRelatedInstruments();
-
-            // Organize data for efficient lookups
-            organizeInstrumentDataForLookups();
-
-            LOGGER.info("Instruments refreshed successfully");
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error refreshing instruments", e);
-            throw new RuntimeException(
-                    "Failed to download instruments from API. Please check your connection and authentication status.",
-                    e);
-        }
-    }
-
-    /**
-     * Force refresh of instruments, bypassing the stale check.
-     * This will always download fresh index instruments from the API.
-     */
-    public void forceRefreshInstruments() {
-        LOGGER.info("Forcing refresh of index instruments from API...");
+        // Always download fresh data and save to files, ignoring useMockData parameter
         refreshInstrumentsAndSaveToFiles();
     }
 
     /**
-     * Kept for backward compatibility - same as forceRefreshInstruments()
+     * Force refresh of instruments
+     */
+    public void forceRefreshInstruments() {
+        // Just call the main refresh method
+        refreshInstrumentsAndSaveToFiles();
+    }
+
+    /**
+     * Kept for backward compatibility
      * 
-     * @deprecated Use forceRefreshInstruments() instead
+     * @deprecated Use refreshInstruments() instead
      */
     @Deprecated
     public void forceRefreshIndexInstruments() {
-        forceRefreshInstruments();
+        refreshInstrumentsAndSaveToFiles();
     }
 
     /**
@@ -343,26 +317,19 @@ public class InstrumentService {
         LOGGER.info("Updating index spot prices");
 
         try {
-            // Get indices from instruments
-            List<String> indexIds = instruments.values().stream()
-                    .filter(i -> i.getType() == InstrumentType.INDEX)
-                    .map(Instrument::getInstrumentId)
-                    .collect(Collectors.toList());
+            // We don't rely on index instruments from download anymore
+            // Instead, we directly use our index mapping
+            List<String> indexLookupSymbols = new ArrayList<>(INDEX_LTP_SYMBOLS.values());
 
-            if (indexIds.isEmpty()) {
-                LOGGER.severe("No indices found to update prices - this will cause trading errors!");
+            if (indexLookupSymbols.isEmpty()) {
+                LOGGER.severe("No index LTP symbols defined - this will cause trading errors!");
                 return;
             }
 
-            // Log all indices we're looking for
-            LOGGER.info("Found " + indexIds.size() + " indices to update prices: " +
-                    instruments.values().stream()
-                            .filter(i -> i.getType() == InstrumentType.INDEX)
-                            .map(Instrument::getTradingSymbol)
-                            .collect(Collectors.joining(", ")));
+            LOGGER.info("Looking up prices for indices: " + indexLookupSymbols);
 
             // Get LTP for indices
-            Map<String, BigDecimal> prices = tradingApiClient.getLTP(indexIds);
+            Map<String, BigDecimal> prices = tradingApiClient.getLTP(indexLookupSymbols);
 
             // Check if prices is empty or null
             if (prices == null || prices.isEmpty()) {
@@ -370,25 +337,20 @@ public class InstrumentService {
                 return;
             }
 
-            // Update index spot prices
-            for (Map.Entry<String, BigDecimal> entry : prices.entrySet()) {
-                String instrumentId = entry.getKey();
-                Instrument instrument = instruments.get(instrumentId);
+            // Update index spot prices using our index mapping
+            for (Map.Entry<String, String> mappingEntry : INDEX_LTP_SYMBOLS.entrySet()) {
+                String indexName = mappingEntry.getKey();
+                String ltpSymbol = mappingEntry.getValue();
 
-                if (instrument != null) {
-                    // For INDEX type instruments, use the tradingSymbol as the key
-                    // This is the actual index name (e.g., "NIFTY", "BANKNIFTY")
-                    String symbol = instrument.getTradingSymbol();
-                    BigDecimal price = entry.getValue();
+                BigDecimal price = prices.get(ltpSymbol);
 
-                    if (symbol != null && price != null) {
-                        indexSpotPrices.put(symbol.toUpperCase(), price);
-                        LOGGER.info("Updated index price: " + symbol + " = " + price);
-                    } else {
-                        LOGGER.warning("Missing symbol or price for instrument: " + instrumentId);
-                    }
+                if (price != null) {
+                    // Store using the index name (like "NIFTY"), not the LTP symbol (like
+                    // "NSE:NIFTY 50")
+                    indexSpotPrices.put(indexName.toUpperCase(), price);
+                    LOGGER.info("Updated index price: " + indexName + " = " + price);
                 } else {
-                    LOGGER.warning("Received price for unknown instrument: " + instrumentId);
+                    LOGGER.warning("No price received for index: " + indexName + " (lookup symbol: " + ltpSymbol + ")");
                 }
             }
 
@@ -707,7 +669,12 @@ public class InstrumentService {
                 instruments.put(instrument.getInstrumentId(), instrument);
             }
 
-            return loadedInstruments;
+            // Filter to only include option instruments with non-null strike prices
+            return loadedInstruments.stream()
+                    .filter(instrument -> instrument.isOption() &&
+                            instrument.getStrikePrice() != null &&
+                            SUPPORTED_FNO_EXCHANGES.contains(instrument.getExchange()))
+                    .collect(Collectors.toList());
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error loading instruments for " + symbol + " expiry " + expiry, e);
             return Collections.emptyList();
@@ -725,18 +692,8 @@ public class InstrumentService {
             return true;
         }
 
-        try {
-            Properties metadata = new Properties();
-            try (FileInputStream fis = new FileInputStream(metadataFile)) {
-                metadata.load(fis);
-            }
-
-            String lastUpdated = metadata.getProperty("last_updated");
-            return isCacheStale(lastUpdated);
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error checking if data files are stale", e);
-            return true;
-        }
+        // Always refresh if requested, no longer checking date
+        return true;
     }
 
     /**
@@ -975,5 +932,42 @@ public class InstrumentService {
         }
 
         return result;
+    }
+
+    /**
+     * Fetch real-time spot price for an index using the Kite Quote API
+     * This method should be called every 5 seconds to get updated prices
+     * 
+     * @param indexSymbol the index symbol
+     * @return the current spot price or null if not available
+     */
+    public BigDecimal fetchRealTimeIndexSpotPrice(String indexSymbol) {
+        try {
+            LOGGER.fine("Fetching real-time spot price for " + indexSymbol);
+
+            // Get the LTP lookup symbol for this index
+            String lookupSymbol = INDEX_LTP_SYMBOLS.get(indexSymbol.toUpperCase());
+            if (lookupSymbol == null) {
+                LOGGER.warning("No lookup symbol defined for index: " + indexSymbol);
+                return null;
+            }
+
+            // Fetch the quote from the trading API using getLTP with a single-item list
+            List<String> symbolList = Collections.singletonList(lookupSymbol);
+            Map<String, BigDecimal> prices = tradingApiClient.getLTP(symbolList);
+            BigDecimal spotPrice = prices.get(lookupSymbol);
+
+            // Update the cached price
+            if (spotPrice != null) {
+                updateIndexSpotPrice(indexSymbol, spotPrice);
+                LOGGER.fine("Updated spot price for " + indexSymbol + ": " + spotPrice);
+            }
+
+            return spotPrice;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error fetching real-time spot price for " + indexSymbol, e);
+            // Return the cached price if available
+            return indexSpotPrices.get(indexSymbol.toUpperCase());
+        }
     }
 }

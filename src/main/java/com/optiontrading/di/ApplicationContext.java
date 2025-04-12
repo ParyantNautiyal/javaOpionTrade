@@ -62,12 +62,63 @@ public class ApplicationContext {
     public boolean ensureAuthenticated() {
         AuthService authService = getService(AuthService.class);
 
+        // First check if we have API credentials - if not, prompt for them
+        if (!authService.hasCredentials()) {
+            LOGGER.warning("API credentials not found. Will prompt for credentials.");
+            if (!promptForCredentials(authService)) {
+                LOGGER.severe("Failed to get API credentials from user.");
+                return false;
+            }
+        }
+
+        // Now check if we're authenticated
         if (!authService.isAuthenticated()) {
             LOGGER.warning("Access token is invalid. Forcing re-authentication.");
             return reAuthenticateInteractively();
         }
 
         return true;
+    }
+
+    /**
+     * Prompt the user to enter API credentials
+     * 
+     * @return true if credentials were entered successfully
+     */
+    private boolean promptForCredentials(AuthService authService) {
+        try {
+            Scanner scanner = new Scanner(System.in);
+
+            System.out.println("\n===== KITE API CREDENTIALS REQUIRED =====");
+            System.out.println("No API credentials found. Please enter your Kite API credentials.");
+
+            System.out.print("\nEnter your Kite API Key: ");
+            String apiKey = scanner.nextLine().trim();
+
+            System.out.print("Enter your Kite API Secret: ");
+            String apiSecret = scanner.nextLine().trim();
+
+            if (apiKey.isEmpty() || apiSecret.isEmpty()) {
+                System.out.println("API Key and Secret cannot be empty!");
+                return false;
+            }
+
+            // Save the credentials
+            authService.setApiCredentials(apiKey, apiSecret);
+            LOGGER.info("API credentials saved successfully.");
+
+            // If it's a KiteAuthService, explicitly reload credentials to ensure they're
+            // loaded in memory
+            if (authService instanceof KiteAuthService) {
+                ((KiteAuthService) authService).reloadCredentials();
+                LOGGER.info("API credentials explicitly reloaded after saving.");
+            }
+
+            return true;
+        } catch (Exception e) {
+            LOGGER.severe("Error while prompting for credentials: " + e.getMessage());
+            return false;
+        }
     }
 
     /**
@@ -81,12 +132,19 @@ public class ApplicationContext {
         try {
             // Get authentication URL
             String authUrl = authService.getLoginUrl();
-            System.out.println("\nPlease visit the following URL to authenticate:");
+            System.out.println("\n===== KITE AUTHENTICATION REQUIRED =====");
+            System.out.println("Please visit the following URL in your browser to authenticate:");
             System.out.println(authUrl);
 
             // Get request token from user
-            System.out.print("\nEnter the request token from the redirect URL: ");
+            System.out.print("\nAfter logging in, you will be redirected to a URL.");
+            System.out.print("\nFind the 'request_token' parameter in the URL and enter it here: ");
             String requestToken = new Scanner(System.in).nextLine().trim();
+
+            if (requestToken.isEmpty()) {
+                System.out.println("Request token cannot be empty!");
+                return false;
+            }
 
             // Generate access token
             authService.generateAccessToken(requestToken);
@@ -95,6 +153,7 @@ public class ApplicationContext {
             return true;
         } catch (Exception e) {
             LOGGER.severe("Error during interactive re-authentication: " + e.getMessage());
+            System.out.println("Authentication failed: " + e.getMessage());
             return false;
         }
     }
