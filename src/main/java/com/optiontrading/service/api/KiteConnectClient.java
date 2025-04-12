@@ -9,6 +9,8 @@ import com.zerodhatech.kiteconnect.KiteConnect;
 import com.zerodhatech.kiteconnect.kitehttp.exceptions.KiteException;
 import com.zerodhatech.models.Quote;
 import com.zerodhatech.models.Margin;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -31,9 +33,9 @@ import org.json.JSONObject;
 /**
  * Client for interacting with Kite Connect API
  */
+@Singleton
 public class KiteConnectClient implements TradingApiClient {
     private static final Logger LOGGER = Logger.getLogger(KiteConnectClient.class.getName());
-    private static KiteConnectClient INSTANCE;
 
     // Kite Connect API endpoints
     private static final String KITE_API_BASE = "https://api.kite.trade";
@@ -55,6 +57,7 @@ public class KiteConnectClient implements TradingApiClient {
     /**
      * Constructor with dependency injection
      */
+    @Inject
     public KiteConnectClient(AuthService authService, EventBus eventBus) {
         this.authService = authService;
         this.eventBus = eventBus;
@@ -72,7 +75,7 @@ public class KiteConnectClient implements TradingApiClient {
         // Check if we already have valid credentials
         checkAuthentication();
 
-        LOGGER.info("Initialized KiteConnectClient, authenticated: " + isAuthenticated);
+        LOGGER.info("Initialized KiteConnectClient with dependency injection, authenticated: " + isAuthenticated);
     }
 
     /**
@@ -797,27 +800,6 @@ public class KiteConnectClient implements TradingApiClient {
             LOGGER.info("=======================================================");
             return false;
         }
-    }
-
-    /**
-     * Get the singleton instance (for backward compatibility)
-     */
-    public static synchronized KiteConnectClient getInstance() {
-        if (INSTANCE == null) {
-            try {
-                // For backward compatibility, try to access the necessary dependencies
-                com.optiontrading.events.EventBus eventBus = com.optiontrading.events.EventBus.getInstance();
-                com.optiontrading.service.auth.KiteAuthService authService = com.optiontrading.service.auth.KiteAuthService
-                        .getInstance();
-
-                INSTANCE = new KiteConnectClient(authService, eventBus);
-                LOGGER.info("Created KiteConnectClient singleton instance");
-            } catch (Exception e) {
-                LOGGER.severe("Error creating KiteConnectClient singleton: " + e.getMessage());
-                throw new RuntimeException("Failed to create KiteConnectClient singleton", e);
-            }
-        }
-        return INSTANCE;
     }
 
     /**

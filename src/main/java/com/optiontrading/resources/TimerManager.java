@@ -6,30 +6,28 @@ import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Logger;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * Centralized manager for all Timer instances in the application.
  * Prevents timer resource leaks by tracking creation and ensuring proper
  * cleanup.
  */
+@Singleton
 public class TimerManager {
     private static final Logger LOGGER = Logger.getLogger(TimerManager.class.getName());
-    private static final TimerManager INSTANCE = new TimerManager();
 
     // Track all created timers with a reference counter
     private final Map<String, ManagedTimer> managedTimers = new ConcurrentHashMap<>();
     private final AtomicInteger timerCounter = new AtomicInteger(0);
 
-    // Private constructor for singleton pattern
-    private TimerManager() {
-        LOGGER.info("Initialized TimerManager");
-    }
-
     /**
-     * Get the singleton instance of the TimerManager
+     * Constructor with dependency injection
      */
-    public static TimerManager getInstance() {
-        return INSTANCE;
+    @Inject
+    public TimerManager() {
+        LOGGER.info("Initialized TimerManager with dependency injection");
     }
 
     /**

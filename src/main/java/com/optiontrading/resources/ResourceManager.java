@@ -2,6 +2,7 @@ package com.optiontrading.resources;
 
 import com.optiontrading.service.position.PositionRepository;
 import com.optiontrading.service.position.PositionWatchlistService;
+import com.google.inject.Inject;
 
 import java.util.logging.Logger;
 import java.util.logging.Level;
@@ -11,7 +12,6 @@ import java.util.logging.Level;
  */
 public class ResourceManager {
     private static final Logger LOGGER = Logger.getLogger(ResourceManager.class.getName());
-    private static final ResourceManager INSTANCE = new ResourceManager();
 
     // Thread manager
     private final ThreadManager threadManager;
@@ -28,22 +28,30 @@ public class ResourceManager {
     // Position repository
     private final PositionRepository positionRepository;
 
-    // Private constructor for singleton
-    private ResourceManager() {
-        this.threadManager = ThreadManager.getInstance();
-        this.timerManager = TimerManager.getInstance();
-        this.cacheManager = CacheManager.getInstance();
-        this.positionWatchlistService = PositionWatchlistService.getInstance();
-        this.positionRepository = PositionRepository.getInstance();
-
-        LOGGER.info("ResourceManager initialized");
-    }
+    // Flag to track initialization state
+    private boolean fullyInitialized = false;
 
     /**
-     * Get the singleton instance
+     * Constructor with dependency injection
      */
-    public static ResourceManager getInstance() {
-        return INSTANCE;
+    @Inject
+    public ResourceManager(ThreadManager threadManager,
+            TimerManager timerManager,
+            CacheManager cacheManager,
+            PositionRepository positionRepository,
+            PositionWatchlistService positionWatchlistService) {
+        LOGGER.info("Starting ResourceManager initialization with dependency injection");
+
+        this.threadManager = threadManager;
+        this.timerManager = timerManager;
+        this.cacheManager = cacheManager;
+        this.positionRepository = positionRepository;
+        this.positionWatchlistService = positionWatchlistService;
+
+        // Mark as initialized
+        this.fullyInitialized = true;
+
+        LOGGER.info("ResourceManager initialized");
     }
 
     /**
@@ -82,6 +90,13 @@ public class ResourceManager {
     }
 
     /**
+     * Check if the resource manager is fully initialized
+     */
+    public boolean isInitialized() {
+        return fullyInitialized;
+    }
+
+    /**
      * Shutdown all managed resources
      */
     public void shutdown() {
@@ -89,19 +104,29 @@ public class ResourceManager {
 
         try {
             // Shut down position repository
-            PositionRepository.getInstance().shutdown();
-
-            // Shutdown thread pools
-            threadManager.shutdownAllExecutors();
-
-            // Cancel all timers
-            timerManager.shutdownAllTimers();
-
-            // Clear caches
-            cacheManager.shutdown();
+            if (positionRepository != null) {
+                positionRepository.shutdown();
+            }
 
             // Shutdown position watchlist
-            positionWatchlistService.shutdown();
+            if (positionWatchlistService != null) {
+                positionWatchlistService.shutdown();
+            }
+
+            // Shutdown thread pools
+            if (threadManager != null) {
+                threadManager.shutdownAllExecutors();
+            }
+
+            // Cancel all timers
+            if (timerManager != null) {
+                timerManager.shutdownAllTimers();
+            }
+
+            // Clear caches
+            if (cacheManager != null) {
+                cacheManager.shutdown();
+            }
 
             LOGGER.info("ResourceManager shutdown complete");
         } catch (Exception e) {
@@ -127,9 +152,12 @@ public class ResourceManager {
         metrics.append("--- CACHE METRICS ---\n");
         metrics.append("Active caches: ").append(cacheManager.getCacheCount()).append("\n");
 
-        metrics.append("--- POSITION WATCHLIST METRICS ---\n");
-        metrics.append("Active positions: ").append(positionWatchlistService.getActivePositions().size()).append("\n");
-        metrics.append("Total positions: ").append(positionWatchlistService.getAllPositions().size()).append("\n");
+        if (positionWatchlistService != null) {
+            metrics.append("--- POSITION WATCHLIST METRICS ---\n");
+            metrics.append("Active positions: ").append(positionWatchlistService.getActivePositions().size())
+                    .append("\n");
+            metrics.append("Total positions: ").append(positionWatchlistService.getAllPositions().size()).append("\n");
+        }
 
         return metrics.toString();
     }

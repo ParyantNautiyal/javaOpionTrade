@@ -2,7 +2,6 @@ package com.optiontrading.service.order;
 
 import com.optiontrading.events.EventBus;
 import com.optiontrading.events.EventSubscriber;
-import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.resources.TimerManager;
 import com.optiontrading.service.instrument.InstrumentService;
 import com.optiontrading.service.model.Instrument;
@@ -13,6 +12,9 @@ import com.optiontrading.service.option.BestOptionsUpdatedEvent;
 import com.optiontrading.service.option.OptionChainService;
 import com.optiontrading.service.trading.TradingService;
 import com.optiontrading.service.model.OptionType;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
+import com.google.inject.Provider;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -29,9 +31,9 @@ import java.util.logging.Logger;
 /**
  * Coordinates the execution of scheduled orders
  */
+@Singleton
 public class OrderExecutionCoordinator {
     private static final Logger LOGGER = Logger.getLogger(OrderExecutionCoordinator.class.getName());
-    private static final OrderExecutionCoordinator INSTANCE = new OrderExecutionCoordinator();
 
     // Map of order ID to active option chain service
     private final Map<String, OptionChainService> optionChainServices = new ConcurrentHashMap<>();
@@ -44,13 +46,27 @@ public class OrderExecutionCoordinator {
     private final InstrumentService instrumentService;
     private final TimerManager timerManager;
     private final EventBus eventBus;
+    private final TradingService tradingService;
+    private final Provider<OptionChainService> optionChainServiceProvider;
 
-    // Private constructor for singleton
-    private OrderExecutionCoordinator() {
-        this.orderRepository = OrderRepository.getInstance();
-        this.instrumentService = InstrumentService.getInstance();
-        this.timerManager = ResourceManager.getInstance().getTimerManager();
-        this.eventBus = EventBus.getInstance();
+    /**
+     * Constructor with dependency injection
+     */
+    @Inject
+    public OrderExecutionCoordinator(
+            OrderRepository orderRepository,
+            InstrumentService instrumentService,
+            TimerManager timerManager,
+            EventBus eventBus,
+            TradingService tradingService,
+            Provider<OptionChainService> optionChainServiceProvider) {
+
+        this.orderRepository = orderRepository;
+        this.instrumentService = instrumentService;
+        this.timerManager = timerManager;
+        this.eventBus = eventBus;
+        this.tradingService = tradingService;
+        this.optionChainServiceProvider = optionChainServiceProvider;
 
         // Subscribe to events
         subscribeToEvents();
@@ -58,14 +74,7 @@ public class OrderExecutionCoordinator {
         // Start checking for orders to execute
         startOrderCheckTimer();
 
-        LOGGER.info("Initialized OrderExecutionCoordinator");
-    }
-
-    /**
-     * Get the singleton instance
-     */
-    public static OrderExecutionCoordinator getInstance() {
-        return INSTANCE;
+        LOGGER.info("Initialized OrderExecutionCoordinator with dependency injection");
     }
 
     /**
@@ -255,8 +264,8 @@ public class OrderExecutionCoordinator {
             LOGGER.info("Found " + eligibleInstruments.size() + " eligible instruments for order: " + orderId);
 
             // Create option chain service for analyzing options
-            OptionChainService optionChainService = new OptionChainService(
-                    orderId, order.getParams().getTargetPremium());
+            OptionChainService optionChainService = optionChainServiceProvider.get();
+            optionChainService.initialize(orderId, order.getParams().getTargetPremium());
 
             // Store the option chain service
             optionChainServices.put(orderId, optionChainService);
@@ -351,9 +360,6 @@ public class OrderExecutionCoordinator {
                     putOption.getExpiryDate(),
                     putHedgeStrike,
                     OptionType.PUT);
-
-            // Import the TradingService
-            TradingService tradingService = TradingService.getInstance();
 
             // Place call hedge order
             if (!callHedgeOptions.isEmpty()) {
@@ -476,9 +482,6 @@ public class OrderExecutionCoordinator {
             LOGGER.info("Executing " + orderType + " order for " + lots + " lots - " +
                     "Call: " + callOption.getTradingSymbol() + " @ " + callPrice + ", " +
                     "Put: " + putOption.getTradingSymbol() + " @ " + putPrice);
-
-            // Import the TradingService
-            TradingService tradingService = TradingService.getInstance();
 
             // Place call option order
             LOGGER.info("Placing order for call option: " + callOption.getInstrumentId());

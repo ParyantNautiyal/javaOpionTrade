@@ -1,14 +1,14 @@
 package com.optiontrading.service.option;
 
 import com.optiontrading.events.EventBus;
-import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.resources.ThreadManager;
 import com.optiontrading.service.instrument.InstrumentService;
-import com.optiontrading.service.market.MarketDataProvider;
+import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.market.MarketDataSubscriber;
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OptionPair;
 import com.optiontrading.service.model.OptionType;
+import com.google.inject.Inject;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -31,8 +31,8 @@ import java.util.stream.Collectors;
 public class OptionChainService implements MarketDataSubscriber {
     private static final Logger LOGGER = Logger.getLogger(OptionChainService.class.getName());
 
-    private final String orderId;
-    private final BigDecimal targetPremium;
+    private String orderId;
+    private BigDecimal targetPremium;
 
     // Set of all instruments being monitored
     private final Set<String> monitoredInstrumentIds = ConcurrentHashMap.newKeySet();
@@ -47,33 +47,46 @@ public class OptionChainService implements MarketDataSubscriber {
     private volatile OptionPair currentBestPair;
 
     // Services and resources
-    private final MarketDataProvider marketDataProvider;
+    private final MarketDataService marketDataService;
     private final InstrumentService instrumentService;
     private final ThreadManager threadManager;
     private final EventBus eventBus;
 
     // Thread pool for analysis operations
-    private final ExecutorService analysisExecutor;
+    private ExecutorService analysisExecutor;
 
     /**
-     * Create a new option chain service instance
-     * 
-     * @param orderId       the order ID this service is monitoring for
-     * @param targetPremium the target premium for option selection
+     * Create a new option chain service instance with dependency injection
      */
-    public OptionChainService(String orderId, BigDecimal targetPremium) {
+    @Inject
+    public OptionChainService(
+            MarketDataService marketDataService,
+            InstrumentService instrumentService,
+            ThreadManager threadManager,
+            EventBus eventBus) {
+
+        this.marketDataService = marketDataService;
+        this.instrumentService = instrumentService;
+        this.threadManager = threadManager;
+        this.eventBus = eventBus;
+
+        LOGGER.info("Created OptionChainService with dependency injection");
+    }
+
+    /**
+     * Initialize this service for a specific order
+     * 
+     * @param orderId       the order ID
+     * @param targetPremium the target premium
+     */
+    public void initialize(String orderId, BigDecimal targetPremium) {
         this.orderId = orderId;
         this.targetPremium = targetPremium;
-
-        this.marketDataProvider = MarketDataProvider.getInstance();
-        this.instrumentService = InstrumentService.getInstance();
-        this.threadManager = ResourceManager.getInstance().getThreadManager();
-        this.eventBus = EventBus.getInstance();
 
         // Create a dedicated thread pool for this service
         this.analysisExecutor = threadManager.createSingleThreadExecutor("OptionAnalysis-" + orderId);
 
-        LOGGER.info("Created OptionChainService for order " + orderId +
+        LOGGER.info("Initialized OptionChainService for order " + orderId +
                 " with target premium " + targetPremium);
     }
 
@@ -97,7 +110,7 @@ public class OptionChainService implements MarketDataSubscriber {
         }
 
         // Subscribe to market data
-        marketDataProvider.subscribe(new ArrayList<>(monitoredInstrumentIds), this);
+        marketDataService.subscribe(new ArrayList<>(monitoredInstrumentIds), this);
     }
 
     /**
@@ -279,7 +292,7 @@ public class OptionChainService implements MarketDataSubscriber {
 
         // Unsubscribe from market data
         if (!monitoredInstrumentIds.isEmpty()) {
-            marketDataProvider.unsubscribe(new ArrayList<>(monitoredInstrumentIds), this);
+            marketDataService.unsubscribe(new ArrayList<>(monitoredInstrumentIds), this);
         }
 
         // Don't shut down the thread pool - ResourceManager will handle that

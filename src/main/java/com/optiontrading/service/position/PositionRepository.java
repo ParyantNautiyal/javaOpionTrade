@@ -17,13 +17,15 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * Repository for persisting positions
  */
+@Singleton
 public class PositionRepository {
     private static final Logger LOGGER = Logger.getLogger(PositionRepository.class.getName());
-    private static final PositionRepository INSTANCE = new PositionRepository();
 
     private static final String DATA_DIR = "data/positions";
     private static final String ACTIVE_POSITIONS_FILE = DATA_DIR + "/active_positions.dat";
@@ -44,8 +46,11 @@ public class PositionRepository {
     // Scheduler for background flushing
     private final ScheduledExecutorService cacheFlushScheduler = Executors.newSingleThreadScheduledExecutor();
 
-    // Private constructor for singleton
-    private PositionRepository() {
+    /**
+     * Constructor with dependency injection
+     */
+    @Inject
+    public PositionRepository() {
         // Ensure data directories exist
         File dataDir = new File(DATA_DIR);
         if (!dataDir.exists()) {
@@ -69,13 +74,6 @@ public class PositionRepository {
 
         LOGGER.info("PositionRepository initialized with " + positions.size() +
                 " positions and cache flush interval of " + CACHE_FLUSH_INTERVAL_MINUTES + " minutes");
-    }
-
-    /**
-     * Get the singleton instance
-     */
-    public static PositionRepository getInstance() {
-        return INSTANCE;
     }
 
     /**

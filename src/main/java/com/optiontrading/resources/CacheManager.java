@@ -5,14 +5,16 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.logging.Logger;
 import java.util.function.Function;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * Centralized manager for all cache instances in the application.
  * Provides bounded cache implementations with eviction policies.
  */
+@Singleton
 public class CacheManager {
     private static final Logger LOGGER = Logger.getLogger(CacheManager.class.getName());
-    private static final CacheManager INSTANCE = new CacheManager();
 
     // Track all created caches
     private final Map<String, BoundedCache<?>> managedCaches = new ConcurrentHashMap<>();
@@ -20,16 +22,12 @@ public class CacheManager {
     // Map of cache name to cache
     private final Map<String, Map<Object, Object>> caches = new ConcurrentHashMap<>();
 
-    // Private constructor for singleton pattern
-    private CacheManager() {
-        LOGGER.info("Initialized CacheManager");
-    }
-
     /**
-     * Get the singleton instance of the CacheManager
+     * Constructor with dependency injection
      */
-    public static CacheManager getInstance() {
-        return INSTANCE;
+    @Inject
+    public CacheManager() {
+        LOGGER.info("Initialized CacheManager with dependency injection");
     }
 
     /**

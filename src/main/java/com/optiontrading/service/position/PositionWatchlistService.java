@@ -2,15 +2,18 @@ package com.optiontrading.service.position;
 
 import com.optiontrading.events.EventBus;
 import com.optiontrading.service.market.MarketDataProvider;
+import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.market.MarketDataSubscriber;
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OrderType;
 import com.optiontrading.service.trading.TradingService;
+import com.google.inject.Inject;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,19 +22,16 @@ import java.util.logging.Logger;
 
 /**
  * Service for managing watched positions
- * Implements singleton pattern and subscribes to market data
+ * Implements dependency injection and subscribes to market data
  */
 public class PositionWatchlistService implements MarketDataSubscriber {
     private static final Logger LOGGER = Logger.getLogger(PositionWatchlistService.class.getName());
-
-    // Singleton instance
-    private static final PositionWatchlistService INSTANCE = new PositionWatchlistService();
 
     // Map of position ID to position
     private final Map<String, WatchedPosition> positions = new ConcurrentHashMap<>();
 
     // Market data provider, event bus, and trading service
-    private final MarketDataProvider marketDataProvider;
+    private final MarketDataService marketDataService;
     private final EventBus eventBus;
     private final TradingService tradingService;
     private final PositionRepository positionRepository;
@@ -39,26 +39,31 @@ public class PositionWatchlistService implements MarketDataSubscriber {
     // Set of instrument IDs being monitored
     private final Map<String, List<String>> instrumentToPositionMap = new ConcurrentHashMap<>();
 
-    // Private constructor for singleton
-    private PositionWatchlistService() {
-        this.marketDataProvider = MarketDataProvider.getInstance();
-        this.eventBus = EventBus.getInstance();
-        this.tradingService = TradingService.getInstance();
-        this.positionRepository = PositionRepository.getInstance();
-
-        // Load positions from repository
-        for (WatchedPosition position : positionRepository.getActivePositions()) {
-            addPositionWithoutPersisting(position);
-        }
-
-        LOGGER.info("Initialized PositionWatchlistService with " + positions.size() + " active positions");
-    }
-
     /**
-     * Get the singleton instance
+     * Constructor with dependency injection
      */
-    public static PositionWatchlistService getInstance() {
-        return INSTANCE;
+    @Inject
+    public PositionWatchlistService(MarketDataService marketDataService,
+            EventBus eventBus,
+            TradingService tradingService,
+            PositionRepository positionRepository) {
+        LOGGER.info("Initializing PositionWatchlistService");
+
+        // Initialize services
+        this.marketDataService = marketDataService;
+        this.eventBus = eventBus;
+        this.tradingService = tradingService;
+        this.positionRepository = positionRepository;
+
+        // Load positions from repository if available
+        if (this.positionRepository != null) {
+            for (WatchedPosition position : positionRepository.getActivePositions()) {
+                addPositionWithoutPersisting(position);
+            }
+            LOGGER.info("Initialized PositionWatchlistService with " + positions.size() + " active positions");
+        } else {
+            LOGGER.warning("PositionWatchlistService initialized without repository connection");
+        }
     }
 
     /**
@@ -108,7 +113,7 @@ public class PositionWatchlistService implements MarketDataSubscriber {
         instrumentToPositionMap.computeIfAbsent(instrumentId, k -> new ArrayList<>()).add(positionId);
 
         // Subscribe to market data for this instrument if not already subscribed
-        marketDataProvider.subscribe(Collections.singletonList(instrumentId), this);
+        marketDataService.subscribe(Collections.singletonList(instrumentId), this);
 
         LOGGER.info("Added position to watchlist: " + position);
 
@@ -150,7 +155,7 @@ public class PositionWatchlistService implements MarketDataSubscriber {
             // If no more positions for this instrument, unsubscribe
             if (positionIds.isEmpty()) {
                 instrumentToPositionMap.remove(instrumentId);
-                marketDataProvider.unsubscribe(Collections.singletonList(instrumentId), this);
+                marketDataService.unsubscribe(Collections.singletonList(instrumentId), this);
             }
         }
 
@@ -636,7 +641,7 @@ public class PositionWatchlistService implements MarketDataSubscriber {
             // Get current market price
             Instrument instrument = position.getInstrument();
             String instrumentId = instrument.getInstrumentId();
-            BigDecimal currentPrice = marketDataProvider.getLastPrice(instrumentId);
+            BigDecimal currentPrice = marketDataService.getLastPrice(instrumentId);
 
             if (currentPrice == null) {
                 LOGGER.warning("Cannot close position " + positionId + ": no current price available");
@@ -714,5 +719,60 @@ public class PositionWatchlistService implements MarketDataSubscriber {
         // Clear collections
         positions.clear();
         instrumentToPositionMap.clear();
+    }
+
+    /**
+     * Force refresh of all positions with latest market data
+     * This method will fetch the latest prices and update all positions
+     */
+    public void refreshPositions() {
+        LOGGER.info("Refreshing all active positions with latest prices");
+
+        // Get all active positions
+        List<WatchedPosition> activePositions = getActivePositions();
+
+        if (activePositions.isEmpty()) {
+            LOGGER.info("No active positions to refresh");
+            return;
+        }
+
+        // Build a list of instruments to refresh
+        List<String> instrumentIds = new ArrayList<>();
+        Map<String, List<String>> instrumentToPositionsMap = new HashMap<>();
+
+        for (WatchedPosition position : activePositions) {
+            if (position.getInstrument() != null) {
+                String instrumentId = position.getInstrument().getInstrumentId();
+                instrumentIds.add(instrumentId);
+
+                // Group positions by instrument ID for processing
+                instrumentToPositionsMap.computeIfAbsent(instrumentId, k -> new ArrayList<>())
+                        .add(position.getId());
+            }
+        }
+
+        if (instrumentIds.isEmpty()) {
+            return;
+        }
+
+        // Refresh prices through market data service
+        try {
+            Map<String, BigDecimal> prices = marketDataService.refreshPrices(instrumentIds);
+
+            LOGGER.info("Refreshed prices for " + prices.size() + " instruments");
+
+            // Process each price update - this will trigger the normal price update flow
+            // through the MarketDataSubscriber interface (onPriceUpdate method)
+            for (Map.Entry<String, BigDecimal> entry : prices.entrySet()) {
+                String instrumentId = entry.getKey();
+                BigDecimal price = entry.getValue();
+
+                // The onPriceUpdate method will handle updating positions
+                // as this class implements MarketDataSubscriber
+                onPriceUpdate(instrumentId, price);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error refreshing position prices", e);
+        }
     }
 }

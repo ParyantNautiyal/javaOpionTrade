@@ -4,15 +4,17 @@ import java.util.Map;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.logging.Logger;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * Centralized manager for all thread pools and ExecutorServices in the
  * application.
  * Prevents thread leaks by tracking creation and ensuring proper cleanup.
  */
+@Singleton
 public class ThreadManager {
     private static final Logger LOGGER = Logger.getLogger(ThreadManager.class.getName());
-    private static final ThreadManager INSTANCE = new ThreadManager();
 
     // Default thread pool configurations
     private static final int DEFAULT_CORE_POOL_SIZE = 2;
@@ -22,15 +24,12 @@ public class ThreadManager {
     // Track all created executor services
     private final Map<String, ManagedExecutor> managedExecutors = new ConcurrentHashMap<>();
 
-    // Private constructor for singleton pattern
-    private ThreadManager() {
-    }
-
     /**
-     * Get the singleton instance of the ThreadManager
+     * Constructor with dependency injection
      */
-    public static ThreadManager getInstance() {
-        return INSTANCE;
+    @Inject
+    public ThreadManager() {
+        LOGGER.info("ThreadManager initialized with dependency injection");
     }
 
     /**

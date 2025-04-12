@@ -1,18 +1,22 @@
 package com.optiontrading;
 
+import com.google.inject.Guice;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
+import com.optiontrading.di.AppModule;
 import com.optiontrading.di.ApplicationContext;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.events.EventSubscriber;
 import com.optiontrading.events.MarketDataEvent;
 import com.optiontrading.events.OrderEvent;
 import com.optiontrading.resources.ResourceManager;
+import com.optiontrading.resources.ResourceMonitor;
 import com.optiontrading.resources.TimerManager;
 import com.optiontrading.service.auth.AuthService;
 import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.order.OrderRepository;
 import com.optiontrading.ui.OrderEntryUI;
-import com.optiontrading.resources.ResourceMonitor;
 
 import java.io.File;
 import java.io.IOException;
@@ -32,6 +36,17 @@ public class Main {
     private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
     private static AtomicBoolean shutdownRequested = new AtomicBoolean(false);
 
+    private final ResourceManager resourceManager;
+    private final ApplicationContext appContext;
+    private final EventBus eventBus;
+
+    @Inject
+    public Main(ResourceManager resourceManager, ApplicationContext appContext, EventBus eventBus) {
+        this.resourceManager = resourceManager;
+        this.appContext = appContext;
+        this.eventBus = eventBus;
+    }
+
     public static void main(String[] args) {
         // Configure logging to file to avoid console interference
         configureLogging();
@@ -39,20 +54,35 @@ public class Main {
         LOGGER.info("Starting Option Trading Application");
 
         try {
-            // Initialize resource manager
-            ResourceManager resourceManager = ResourceManager.getInstance();
+            // Create Guice injector with AppModule
+            Injector injector = Guice.createInjector(new AppModule());
+
+            // Get Main application instance from Guice
+            Main app = injector.getInstance(Main.class);
+
+            // Start the application
+            app.start();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Unhandled exception in main", e);
+            System.err.println("Fatal error: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Start the application
+     */
+    public void start() {
+        try {
             LOGGER.info("Resource manager initialized");
 
-            // Initialize application context
-            ApplicationContext appContext = new ApplicationContext();
             LOGGER.info("Application context initialized");
 
             // Setup event subscribers
-            EventBus eventBus = appContext.getService(EventBus.class);
             setupEventSubscribers(eventBus);
 
             // Ensure Kite API authentication with interactive mode
-            boolean authenticated = appContext.ensureAuthenticated(true);
+            boolean authenticated = appContext.ensureAuthenticated();
             if (!authenticated) {
                 LOGGER.severe("Failed to authenticate with Kite API even after interactive mode, exiting application");
                 System.exit(1);
@@ -61,8 +91,9 @@ public class Main {
             // Start authenticated services
             appContext.startAuthenticatedServices();
 
-            // Start resource monitoring
-            ResourceMonitor.getInstance().startMonitoring(30);
+            // Start resource monitoring with Guice
+            ResourceMonitor resourceMonitor = Guice.createInjector(new AppModule()).getInstance(ResourceMonitor.class);
+            resourceMonitor.startMonitoring(30);
             LOGGER.info("Resource monitoring started with 30-second interval");
 
             LOGGER.info("Application started successfully");
@@ -77,12 +108,12 @@ public class Main {
             LOGGER.info("Shutting down application");
             appContext.shutdown();
             resourceManager.shutdown();
-            ResourceMonitor.getInstance().stopMonitoring();
-            LOGGER.info("Application shutdown complete");
+            resourceMonitor.stopMonitoring();
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Application startup failed", e);
-            System.exit(1);
+            LOGGER.log(Level.SEVERE, "Error in application startup", e);
+            System.err.println("Fatal error: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -163,13 +194,12 @@ public class Main {
 
                     case 2:
                         // View existing orders
-                        displayExistingOrders();
+                        showOrderList(scanner, appContext);
                         break;
 
                     case 3:
                         // View resource metrics
-                        System.out.println("\n----- RESOURCE METRICS -----");
-                        System.out.println(ResourceManager.getInstance().getResourceMetrics());
+                        showResourceMetrics(scanner, appContext);
                         break;
 
                     case 4:
@@ -233,33 +263,49 @@ public class Main {
     }
 
     /**
-     * Display existing orders from the repository
+     * Show the application metrics
+     * 
+     * @param scanner The scanner for user input
      */
-    private static void displayExistingOrders() {
-        try {
-            OrderRepository repository = OrderRepository.getInstance();
-            List<ScheduledOrder> orders = repository.getAllOrders();
+    private static void showResourceMetrics(Scanner scanner, ApplicationContext appContext) {
+        clearConsole();
+        System.out.println("\n===== RESOURCE METRICS =====");
 
-            System.out.println("\n----- EXISTING ORDERS -----");
-            if (orders.isEmpty()) {
-                System.out.println("No orders found.");
-            } else {
-                System.out.println("Order ID | Index | Expiry | Status | Execution Time");
-                System.out.println("--------------------------------------------------");
-                for (ScheduledOrder order : orders) {
-                    System.out.printf("%-8s | %-5s | %-10s | %-10s | %s%n",
-                            order.getOrderId().substring(0, Math.min(8, order.getOrderId().length())),
-                            order.getParams().getIndexSymbol(),
-                            order.getParams().getExpiryDate(),
-                            order.getStatus(),
-                            order.getExecutionTime());
-                }
-                System.out.println("Total orders: " + orders.size());
+        // Get resource manager from the context
+        ResourceManager resourceManager = appContext.getService(ResourceManager.class);
+        System.out.println(resourceManager.getResourceMetrics());
+
+        pressEnterToContinue(scanner);
+    }
+
+    /**
+     * Show order list
+     */
+    private static void showOrderList(Scanner scanner, ApplicationContext appContext) {
+        clearConsole();
+        System.out.println("\n===== SCHEDULED ORDERS =====");
+
+        // Get order repository from the context
+        OrderRepository orderRepository = appContext.getService(OrderRepository.class);
+        List<ScheduledOrder> orders = orderRepository.getAllOrders();
+
+        if (orders.isEmpty()) {
+            System.out.println("No orders scheduled");
+        } else {
+            for (ScheduledOrder order : orders) {
+                System.out.println(order);
             }
-        } catch (Exception e) {
-            System.out.println("Error retrieving orders: " + e.getMessage());
-            LOGGER.log(Level.WARNING, "Error retrieving orders", e);
         }
+
+        pressEnterToContinue(scanner);
+    }
+
+    /**
+     * Helper method to wait for user to press Enter
+     */
+    private static void pressEnterToContinue(Scanner scanner) {
+        System.out.println("\nPress Enter to continue...");
+        scanner.nextLine();
     }
 
     private static void setupEventSubscribers(EventBus eventBus) {

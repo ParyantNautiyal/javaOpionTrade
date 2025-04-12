@@ -5,7 +5,9 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Interface for market data services
+ * Service interface for market data operations.
+ * This is the central market data provider that feeds price data to all
+ * components.
  */
 public interface MarketDataService {
 
@@ -13,11 +15,6 @@ public interface MarketDataService {
      * Start the market data service
      */
     void start();
-
-    /**
-     * Stop the market data service
-     */
-    void shutdown();
 
     /**
      * Subscribe to market data for instruments
@@ -58,4 +55,17 @@ public interface MarketDataService {
      * @return map of instrument ID to updated price
      */
     Map<String, BigDecimal> refreshPrices(List<String> instrumentIds);
+
+    /**
+     * Update price for testing/simulation purposes
+     * 
+     * @param instrumentId the instrument ID to update
+     * @param newPrice     the new price to set
+     */
+    void updatePriceForTesting(String instrumentId, BigDecimal newPrice);
+
+    /**
+     * Shut down the market data service
+     */
+    void shutdown();
 }

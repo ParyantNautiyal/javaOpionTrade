@@ -1,5 +1,7 @@
 package com.optiontrading.service.auth;
 
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 import com.optiontrading.events.Event;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.ResourceManager;
@@ -31,9 +33,9 @@ import org.json.JSONObject;
 /**
  * Service for handling authentication with Kite Connect API
  */
+@Singleton
 public class KiteAuthService implements AuthService {
     private static final Logger LOGGER = Logger.getLogger(KiteAuthService.class.getName());
-    private static KiteAuthService INSTANCE;
 
     // Property keys
     private static final String API_KEY = "api_key";
@@ -79,6 +81,7 @@ public class KiteAuthService implements AuthService {
     /**
      * Constructor - loads configuration and initializes state
      */
+    @Inject
     public KiteAuthService(EventBus eventBus) {
         this.eventBus = eventBus;
 
@@ -110,24 +113,6 @@ public class KiteAuthService implements AuthService {
         checkAccessTokenValidity();
 
         LOGGER.info("Initialized KiteAuthService");
-    }
-
-    /**
-     * Get the singleton instance (for backward compatibility)
-     */
-    public static synchronized KiteAuthService getInstance() {
-        if (INSTANCE == null) {
-            try {
-                // For backward compatibility, try to create a new instance with EventBus
-                com.optiontrading.events.EventBus eventBus = com.optiontrading.events.EventBus.getInstance();
-                INSTANCE = new KiteAuthService(eventBus);
-                LOGGER.info("Created KiteAuthService singleton instance");
-            } catch (Exception e) {
-                LOGGER.severe("Error creating KiteAuthService singleton: " + e.getMessage());
-                throw new RuntimeException("Failed to create KiteAuthService singleton", e);
-            }
-        }
-        return INSTANCE;
     }
 
     /**

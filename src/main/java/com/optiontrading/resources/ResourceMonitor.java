@@ -18,17 +18,19 @@ import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import java.util.List;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 /**
  * Monitors application-specific resources and logs usage statistics
  * Creates a dedicated log file for resource usage tracking
  * This class is completely independent of other application components
  */
+@Singleton
 public class ResourceMonitor {
     private static final Logger LOGGER = Logger.getLogger(ResourceMonitor.class.getName());
     private static final String LOG_DIR = "logs";
     private static final String RESOURCE_LOG_FILE = LOG_DIR + "/resource_usage.log";
-    private static ResourceMonitor INSTANCE;
 
     private final ScheduledExecutorService scheduler;
     private final MemoryMXBean memoryBean;
@@ -38,8 +40,11 @@ public class ResourceMonitor {
 
     private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
-    // Private constructor for singleton
-    private ResourceMonitor() {
+    /**
+     * Constructor with dependency injection
+     */
+    @Inject
+    public ResourceMonitor() {
         this.scheduler = Executors.newScheduledThreadPool(1);
         this.memoryBean = ManagementFactory.getMemoryMXBean();
         this.threadBean = ManagementFactory.getThreadMXBean();
@@ -57,20 +62,10 @@ public class ResourceMonitor {
             fileHandler.setFormatter(new ResourceLogFormatter());
             this.resourceLogger.addHandler(fileHandler);
 
-            LOGGER.info("ResourceMonitor initialized, logging to " + RESOURCE_LOG_FILE);
+            LOGGER.info("ResourceMonitor initialized with dependency injection, logging to " + RESOURCE_LOG_FILE);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error setting up resource log file", e);
         }
-    }
-
-    /**
-     * Get the singleton instance
-     */
-    public static synchronized ResourceMonitor getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new ResourceMonitor();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -79,7 +74,7 @@ public class ResourceMonitor {
      * @param intervalSeconds interval between log entries in seconds
      */
     public void startMonitoring(int intervalSeconds) {
-        LOGGER.info("Starting resource monitoring with " + intervalSeconds + " second interval");
+        LOGGER.info("Starting resource monitoring with interval: " + intervalSeconds + " seconds");
 
         scheduler.scheduleAtFixedRate(() -> {
             try {
@@ -96,12 +91,18 @@ public class ResourceMonitor {
     public void stopMonitoring() {
         LOGGER.info("Stopping resource monitoring");
         scheduler.shutdown();
+
         try {
+            if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
+                scheduler.shutdownNow();
+            }
+
             if (fileHandler != null) {
                 fileHandler.close();
             }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error closing resource log file handler", e);
+        } catch (InterruptedException e) {
+            scheduler.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 

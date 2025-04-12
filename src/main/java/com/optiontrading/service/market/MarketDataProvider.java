@@ -5,6 +5,8 @@ import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.resources.TimerManager;
 import com.optiontrading.service.api.TradingApiClient;
+import com.google.inject.Inject;
+import com.optiontrading.events.PriceUpdateEvent;
 
 import java.math.BigDecimal;
 import java.util.*;
@@ -17,7 +19,6 @@ import java.util.logging.Logger;
  */
 public class MarketDataProvider implements MarketDataService {
     private static final Logger LOGGER = Logger.getLogger(MarketDataProvider.class.getName());
-    private static MarketDataProvider INSTANCE;
 
     // Default update interval - 5 seconds
     private static final int DEFAULT_UPDATE_INTERVAL = 5000;
@@ -47,40 +48,19 @@ public class MarketDataProvider implements MarketDataService {
     private final TradingApiClient tradingApiClient;
 
     /**
-     * Private constructor for singleton instance
-     */
-    private MarketDataProvider() {
-        ResourceManager resourceManager = ResourceManager.getInstance();
-        this.timerManager = resourceManager.getTimerManager();
-
-        // For backward compatibility, use the static instances
-        this.tradingApiClient = com.optiontrading.service.api.KiteConnectClient.getInstance();
-        this.eventBus = com.optiontrading.events.EventBus.getInstance();
-
-        LOGGER.info("Initialized MarketDataProvider singleton instance");
-    }
-
-    /**
      * Constructor with dependency injection
      * 
      * @param tradingApiClient the trading API client
      * @param eventBus         the event bus
+     * @param timerManager     the timer manager
      */
-    public MarketDataProvider(TradingApiClient tradingApiClient, EventBus eventBus) {
+    @Inject
+    public MarketDataProvider(TradingApiClient tradingApiClient, EventBus eventBus, TimerManager timerManager) {
         this.tradingApiClient = tradingApiClient;
         this.eventBus = eventBus;
-        this.timerManager = ResourceManager.getInstance().getTimerManager();
-        LOGGER.info("Initialized MarketDataProvider with dependency injection");
-    }
+        this.timerManager = timerManager;
 
-    /**
-     * Get the singleton instance (for backward compatibility)
-     */
-    public static synchronized MarketDataProvider getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new MarketDataProvider();
-        }
-        return INSTANCE;
+        LOGGER.info("Initialized MarketDataProvider with dependency injection");
     }
 
     /**
@@ -90,11 +70,13 @@ public class MarketDataProvider implements MarketDataService {
     public void start() {
         LOGGER.info("Starting MarketDataProvider");
 
-        // Start update timer if not already running
-        if (updateTimer == null) {
+        // Start update timer if not already running and if timer manager is available
+        if (updateTimer == null && timerManager != null) {
             updateTimer = timerManager.createTimer("MarketData-Updater", true);
             updateTimer.scheduleAtFixedRate(new PriceUpdateTask(), 0, DEFAULT_UPDATE_INTERVAL);
             LOGGER.info("Started price update timer with interval: " + DEFAULT_UPDATE_INTERVAL + "ms");
+        } else if (timerManager == null) {
+            LOGGER.warning("Could not start MarketDataProvider - TimerManager not available");
         }
     }
 
@@ -235,6 +217,41 @@ public class MarketDataProvider implements MarketDataService {
             LOGGER.log(Level.WARNING, "Error refreshing prices: " + e.getMessage(), e);
             return new HashMap<>();
         }
+    }
+
+    /**
+     * Update price for testing/simulation purposes
+     * This method allows manual injection of prices for testing
+     * 
+     * @param instrumentId the instrument ID to update
+     * @param newPrice     the new price to set
+     */
+    @Override
+    public void updatePriceForTesting(String instrumentId, BigDecimal newPrice) {
+        if (instrumentId == null || newPrice == null) {
+            return;
+        }
+
+        LOGGER.info("Setting test price for " + instrumentId + ": " + newPrice);
+
+        // Update the price in our cache
+        lastPrices.put(instrumentId, newPrice);
+
+        // Notify subscribers
+        Set<MarketDataSubscriber> subs = subscribers.get(instrumentId);
+        if (subs != null) {
+            for (MarketDataSubscriber subscriber : subs) {
+                try {
+                    subscriber.onPriceUpdate(instrumentId, newPrice);
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error notifying subscriber: " + e.getMessage(), e);
+                }
+            }
+        }
+
+        // Publish price update event
+        PriceUpdateEvent priceEvent = new PriceUpdateEvent(instrumentId, newPrice);
+        eventBus.publishAsync(priceEvent);
     }
 
     /**

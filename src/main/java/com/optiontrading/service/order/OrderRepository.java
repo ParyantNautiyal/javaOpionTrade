@@ -5,6 +5,8 @@ import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.OrderStatus;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.model.Instrument;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -18,9 +20,9 @@ import java.util.stream.Collectors;
 /**
  * Repository for storing and retrieving scheduled orders
  */
+@Singleton
 public class OrderRepository {
     private static final Logger LOGGER = Logger.getLogger(OrderRepository.class.getName());
-    private static final OrderRepository INSTANCE = new OrderRepository();
 
     // Map of order ID to scheduled order
     private final Map<String, ScheduledOrder> orders = new ConcurrentHashMap<>();
@@ -31,17 +33,13 @@ public class OrderRepository {
     // Event bus for publishing events
     private final EventBus eventBus;
 
-    // Private constructor for singleton
-    private OrderRepository() {
-        this.eventBus = EventBus.getInstance();
-        LOGGER.info("Initialized OrderRepository");
-    }
-
     /**
-     * Get the singleton instance
+     * Constructor with dependency injection
      */
-    public static OrderRepository getInstance() {
-        return INSTANCE;
+    @Inject
+    public OrderRepository(EventBus eventBus) {
+        this.eventBus = eventBus;
+        LOGGER.info("Initialized OrderRepository with dependency injection");
     }
 
     /**

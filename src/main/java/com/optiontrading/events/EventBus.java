@@ -1,7 +1,8 @@
 package com.optiontrading.events;
 
-import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.resources.ThreadManager;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 import java.util.Map;
 import java.util.Set;
@@ -13,9 +14,9 @@ import java.util.logging.Logger;
 /**
  * Event bus for publishing and subscribing to events
  */
+@Singleton
 public class EventBus {
     private static final Logger LOGGER = Logger.getLogger(EventBus.class.getName());
-    private static EventBus INSTANCE;
 
     // Map of event class to subscribers
     private final Map<Class<? extends Event>, Set<EventSubscriber<?>>> subscribers = new ConcurrentHashMap<>();
@@ -28,21 +29,10 @@ public class EventBus {
      * 
      * @param threadManager the thread manager to use for creating thread pools
      */
+    @Inject
     public EventBus(ThreadManager threadManager) {
         this.asyncExecutor = threadManager.createFixedThreadPool("EventBus", 4);
-        LOGGER.info("Initialized EventBus");
-    }
-
-    /**
-     * Get the singleton instance (for backward compatibility)
-     */
-    public static synchronized EventBus getInstance() {
-        if (INSTANCE == null) {
-            ThreadManager threadManager = ResourceManager.getInstance().getThreadManager();
-            INSTANCE = new EventBus(threadManager);
-            LOGGER.info("Created EventBus singleton instance");
-        }
-        return INSTANCE;
+        LOGGER.info("Initialized EventBus with dependency injection");
     }
 
     /**

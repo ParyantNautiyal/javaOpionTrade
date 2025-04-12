@@ -1,12 +1,19 @@
 package com.optiontrading;
 
+import com.google.inject.Guice;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
+import com.optiontrading.di.AppModule;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.events.EventSubscriber;
 import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.service.api.KiteConnectClient;
+import com.optiontrading.service.api.TradingApiClient;
+import com.optiontrading.service.auth.AuthService;
 import com.optiontrading.service.auth.KiteAuthService;
 import com.optiontrading.service.instrument.InstrumentService;
 import com.optiontrading.service.market.MarketDataProvider;
+import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.OrderStatus;
 import com.optiontrading.service.model.OrderType;
@@ -32,26 +39,36 @@ public class TestApplication {
     private static final Logger LOGGER = Logger.getLogger(TestApplication.class.getName());
 
     // Services
-    private final MarketDataProvider marketDataProvider;
+    private final MarketDataService marketDataService;
     private final InstrumentService instrumentService;
     private final OrderRepository orderRepository;
     private final OrderExecutionCoordinator executionCoordinator;
     private final EventBus eventBus;
-    private final KiteConnectClient kiteClient;
-    private final KiteAuthService authService;
+    private final TradingApiClient tradingApiClient;
+    private final AuthService authService;
+    private final ResourceManager resourceManager;
 
     /**
-     * Create a new test application
+     * Create a new test application using dependency injection
      */
-    public TestApplication() {
-        // Initialize services
-        this.marketDataProvider = MarketDataProvider.getInstance();
-        this.instrumentService = InstrumentService.getInstance();
-        this.orderRepository = OrderRepository.getInstance();
-        this.executionCoordinator = OrderExecutionCoordinator.getInstance();
-        this.eventBus = EventBus.getInstance();
-        this.kiteClient = KiteConnectClient.getInstance();
-        this.authService = KiteAuthService.getInstance();
+    @Inject
+    public TestApplication(
+            MarketDataService marketDataService,
+            InstrumentService instrumentService,
+            OrderRepository orderRepository,
+            OrderExecutionCoordinator executionCoordinator,
+            EventBus eventBus,
+            TradingApiClient tradingApiClient,
+            AuthService authService,
+            ResourceManager resourceManager) {
+        this.marketDataService = marketDataService;
+        this.instrumentService = instrumentService;
+        this.orderRepository = orderRepository;
+        this.executionCoordinator = executionCoordinator;
+        this.eventBus = eventBus;
+        this.tradingApiClient = tradingApiClient;
+        this.authService = authService;
+        this.resourceManager = resourceManager;
 
         // Subscribe to events
         subscribeToEvents();
@@ -165,7 +182,7 @@ public class TestApplication {
         }
 
         System.out.println("Shutting down...");
-        ResourceManager.getInstance().shutdown();
+        resourceManager.shutdown();
         scanner.close();
     }
 
@@ -256,7 +273,7 @@ public class TestApplication {
     private void checkAuthStatus() {
         System.out.println("\n== Authentication Status ==");
 
-        if (kiteClient.isAuthenticated()) {
+        if (tradingApiClient.isAuthenticated()) {
             System.out.println("Authenticated with Kite Connect");
             System.out.println("User ID: " + authService.getUserId());
         } else {
@@ -276,7 +293,7 @@ public class TestApplication {
     private void logoutFromKite() {
         System.out.println("\n== Logout from Kite Connect ==");
 
-        if (!kiteClient.isAuthenticated()) {
+        if (!tradingApiClient.isAuthenticated()) {
             System.out.println("Not authenticated with Kite Connect");
             return;
         }
@@ -292,7 +309,7 @@ public class TestApplication {
     private void refreshInstruments() {
         System.out.println("\n== Refreshing Instruments ==");
 
-        if (!kiteClient.isAuthenticated()) {
+        if (!tradingApiClient.isAuthenticated()) {
             System.out.println("Not authenticated with Kite Connect. Please login first.");
             return;
         }
@@ -579,14 +596,20 @@ public class TestApplication {
     }
 
     /**
-     * Main method
+     * Main entry point
      */
     public static void main(String[] args) {
         try {
-            new TestApplication().run();
+            // Create Guice injector with application module
+            Injector injector = Guice.createInjector(new AppModule());
+
+            // Get TestApplication instance from Guice
+            TestApplication app = injector.getInstance(TestApplication.class);
+
+            // Run the test
+            app.run();
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Unhandled exception in main", e);
-            System.err.println("Fatal error: " + e.getMessage());
+            LOGGER.severe("Error in TestApplication: " + e.getMessage());
             e.printStackTrace();
         }
     }

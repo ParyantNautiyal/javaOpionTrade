@@ -1,5 +1,10 @@
 package com.optiontrading.ui;
 
+import com.google.inject.Guice;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
+import com.google.inject.Singleton;
+import com.optiontrading.di.AppModule;
 import com.optiontrading.service.instrument.InstrumentService;
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OptionType;
@@ -25,6 +30,7 @@ import java.util.stream.Collectors;
 /**
  * Simple UI for entering order details with instrument selection dropdowns
  */
+@Singleton
 public class OrderEntryUI extends JFrame {
     private static final long serialVersionUID = 1L;
     private final InstrumentService instrumentService;
@@ -44,9 +50,10 @@ public class OrderEntryUI extends JFrame {
     private List<BigDecimal> availableStrikes = new ArrayList<>();
     private List<Instrument> filteredInstruments = new ArrayList<>();
 
-    public OrderEntryUI() {
-        this.instrumentService = InstrumentService.getInstance();
-        this.orderRepository = OrderRepository.getInstance();
+    @Inject
+    public OrderEntryUI(InstrumentService instrumentService, OrderRepository orderRepository) {
+        this.instrumentService = instrumentService;
+        this.orderRepository = orderRepository;
 
         // Initialize UI
         initializeUI();
@@ -393,7 +400,10 @@ public class OrderEntryUI extends JFrame {
             } catch (Exception e) {
                 e.printStackTrace();
             }
-            OrderEntryUI orderEntryUI = new OrderEntryUI();
+
+            // Create Guice injector and get OrderEntryUI instance
+            Injector injector = Guice.createInjector(new AppModule());
+            OrderEntryUI orderEntryUI = injector.getInstance(OrderEntryUI.class);
             orderEntryUI.setVisible(true);
         });
     }

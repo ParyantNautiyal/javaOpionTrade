@@ -2,11 +2,13 @@ package com.optiontrading.service.instrument;
 
 import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.CacheManager;
-import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.service.api.KiteConnectClient;
+import com.optiontrading.service.api.TradingApiClient;
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.InstrumentType;
 import com.optiontrading.service.model.OptionType;
+import com.google.inject.Inject;
+import com.google.inject.Singleton;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -31,9 +33,9 @@ import java.time.DayOfWeek;
 /**
  * Service for downloading and managing instruments
  */
+@Singleton
 public class InstrumentService {
     private static final Logger LOGGER = Logger.getLogger(InstrumentService.class.getName());
-    private static InstrumentService INSTANCE;
 
     // Cache of all instruments
     private final Map<String, Instrument> instruments = new ConcurrentHashMap<>();
@@ -47,42 +49,22 @@ public class InstrumentService {
     // Resource managers and services
     private final CacheManager cacheManager;
     private final EventBus eventBus;
-    private final KiteConnectClient kiteClient;
+    private final TradingApiClient tradingApiClient;
 
     private static final String INSTRUMENTS_DIR = "data/instruments";
 
     /**
-     * Constructor for dependency injection
+     * Constructor with dependency injection
      */
-    public InstrumentService(CacheManager cacheManager, EventBus eventBus, KiteConnectClient kiteClient) {
+    @Inject
+    public InstrumentService(CacheManager cacheManager, EventBus eventBus, TradingApiClient tradingApiClient) {
         this.cacheManager = cacheManager;
         this.eventBus = eventBus;
-        this.kiteClient = kiteClient;
+        this.tradingApiClient = tradingApiClient;
 
         // Don't load instruments automatically - wait until refreshInstruments is
         // called
         LOGGER.info("Created InstrumentService with dependency injection (initialization deferred)");
-    }
-
-    // Private constructor for singleton
-    private InstrumentService() {
-        this.cacheManager = ResourceManager.getInstance().getCacheManager();
-        this.eventBus = EventBus.getInstance();
-        this.kiteClient = KiteConnectClient.getInstance();
-
-        // Don't load instruments automatically - wait until refreshInstruments is
-        // called
-        LOGGER.info("Created InstrumentService singleton (initialization deferred)");
-    }
-
-    /**
-     * Get the singleton instance
-     */
-    public static synchronized InstrumentService getInstance() {
-        if (INSTANCE == null) {
-            INSTANCE = new InstrumentService();
-        }
-        return INSTANCE;
     }
 
     /**
@@ -190,7 +172,7 @@ public class InstrumentService {
             // First download index instruments from NSE to get spot prices
             LOGGER.info("Downloading indices from NSE...");
             try {
-                List<Instrument> nseInstruments = kiteClient.getInstruments("NSE");
+                List<Instrument> nseInstruments = tradingApiClient.getInstruments("NSE");
                 int indexCount = 0;
                 for (Instrument instrument : nseInstruments) {
                     // Only keep the main indices we're interested in
@@ -206,7 +188,7 @@ public class InstrumentService {
             }
 
             // Download instruments from NFO
-            List<Instrument> nfoInstruments = kiteClient.getInstruments("NFO");
+            List<Instrument> nfoInstruments = tradingApiClient.getInstruments("NFO");
             int nfoCount = 0;
             for (Instrument instrument : nfoInstruments) {
                 // ALWAYS filter to only keep instruments related to our target indices
@@ -219,7 +201,7 @@ public class InstrumentService {
             LOGGER.info("Downloaded " + nfoCount + " index-related instruments from NFO");
 
             // Download instruments from BFO
-            List<Instrument> bfoInstruments = kiteClient.getInstruments("BFO");
+            List<Instrument> bfoInstruments = tradingApiClient.getInstruments("BFO");
             int bfoCount = 0;
             for (Instrument instrument : bfoInstruments) {
                 // ALWAYS filter to only keep instruments related to our target indices
@@ -380,7 +362,7 @@ public class InstrumentService {
                             .collect(Collectors.joining(", ")));
 
             // Get LTP for indices
-            Map<String, BigDecimal> prices = kiteClient.getLTP(indexIds);
+            Map<String, BigDecimal> prices = tradingApiClient.getLTP(indexIds);
 
             // Check if prices is empty or null
             if (prices == null || prices.isEmpty()) {

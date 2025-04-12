@@ -15,12 +15,31 @@ public interface AuthService {
     boolean hasApiCredentials();
 
     /**
+     * Alias for hasApiCredentials for more intuitive naming
+     * 
+     * @return true if credentials are set, false otherwise
+     */
+    default boolean hasCredentials() {
+        return hasApiCredentials();
+    }
+
+    /**
      * Set API credentials
      * 
      * @param apiKey    the API key
      * @param apiSecret the API secret
      */
     void setApiCredentials(String apiKey, String apiSecret);
+
+    /**
+     * Alias for setApiCredentials for more intuitive naming
+     * 
+     * @param apiKey    the API key
+     * @param apiSecret the API secret
+     */
+    default void saveCredentials(String apiKey, String apiSecret) {
+        setApiCredentials(apiKey, apiSecret);
+    }
 
     /**
      * Get the API key
@@ -61,11 +80,31 @@ public interface AuthService {
     String generateAccessToken(String requestToken, String userId);
 
     /**
+     * Generate a new access token with default user ID
+     * 
+     * @param requestToken the request token
+     * @return the new access token
+     * @throws RuntimeException if token generation fails
+     */
+    default String generateAccessToken(String requestToken) {
+        return generateAccessToken(requestToken, null);
+    }
+
+    /**
      * Check if the access token is valid
      * 
      * @return true if valid, false otherwise
      */
     boolean isAccessTokenValid();
+
+    /**
+     * Check if the user is authenticated
+     * 
+     * @return true if authenticated, false otherwise
+     */
+    default boolean isAuthenticated() {
+        return isAccessTokenValid();
+    }
 
     /**
      * Get the access token

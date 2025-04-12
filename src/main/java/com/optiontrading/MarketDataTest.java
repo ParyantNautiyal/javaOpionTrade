@@ -1,5 +1,10 @@
 package com.optiontrading;
 
+import com.google.inject.Guice;
+import com.google.inject.Inject;
+import com.google.inject.Injector;
+import com.optiontrading.di.AppModule;
+import com.optiontrading.di.ApplicationContext;
 import com.optiontrading.events.EventBus;
 import com.optiontrading.resources.ResourceManager;
 import com.optiontrading.service.api.TradingApiClient;
@@ -11,6 +16,7 @@ import com.optiontrading.service.market.MarketDataSubscriber;
 import java.math.BigDecimal;
 import java.io.IOException;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -18,7 +24,7 @@ import java.util.logging.Logger;
 /**
  * Test class for the MarketDataProvider
  */
-public class MarketDataTest {
+public class MarketDataTest implements MarketDataSubscriber {
     private static final Logger LOGGER = Logger.getLogger(MarketDataTest.class.getName());
 
     // Services used by the test
@@ -30,6 +36,7 @@ public class MarketDataTest {
     /**
      * Constructor with dependency injection
      */
+    @Inject
     public MarketDataTest(ResourceManager resourceManager, AuthService authService,
             TradingApiClient tradingApiClient, MarketDataService marketDataService) {
         this.resourceManager = resourceManager;
@@ -45,12 +52,11 @@ public class MarketDataTest {
         LOGGER.info("Starting MarketDataProvider Test");
 
         try {
-            // Initialize resource manager
-            ResourceManager resourceManager = ResourceManager.getInstance();
-            LOGGER.info("Resource manager initialized");
+            // Create Guice injector with application module
+            Injector injector = Guice.createInjector(new AppModule());
 
             // Create an application context with DI
-            com.optiontrading.di.ApplicationContext appContext = new com.optiontrading.di.ApplicationContext();
+            ApplicationContext appContext = new ApplicationContext();
 
             // Ensure user is authenticated before proceeding
             if (!appContext.ensureAuthenticated()) {
@@ -61,14 +67,8 @@ public class MarketDataTest {
             // Start authenticated services
             appContext.startAuthenticatedServices();
 
-            // Get services from context
-            EventBus eventBus = appContext.getService(EventBus.class);
-            AuthService authService = appContext.getService(AuthService.class);
-            TradingApiClient tradingApiClient = appContext.getService(TradingApiClient.class);
-            MarketDataService marketDataService = appContext.getService(MarketDataService.class);
-
-            // Create and run the test
-            MarketDataTest test = new MarketDataTest(resourceManager, authService, tradingApiClient, marketDataService);
+            // Get the MarketDataTest instance from Guice
+            MarketDataTest test = injector.getInstance(MarketDataTest.class);
             test.run();
         } catch (Exception e) {
             LOGGER.severe("Error in MarketDataTest: " + e.getMessage());
@@ -146,5 +146,10 @@ public class MarketDataTest {
         // Subscribe to the instruments
         LOGGER.info("Subscribing to instruments: " + instruments);
         marketDataService.subscribe(instruments, subscriber);
+    }
+
+    @Override
+    public void onPriceUpdate(String instrumentId, BigDecimal price) {
+        // Implementation of onPriceUpdate method
     }
 }
