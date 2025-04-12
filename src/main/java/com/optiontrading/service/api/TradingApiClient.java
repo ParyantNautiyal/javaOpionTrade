@@ -51,4 +51,12 @@ public interface TradingApiClient {
      * @return the order ID
      */
     String placeOrder(String instrumentId, int quantity, BigDecimal price, boolean isBuy);
+
+    /**
+     * Get margin details from the broker
+     * 
+     * @return a map containing margin information with structure specific to the
+     *         broker
+     */
+    Map<String, Object> getMargins();
 }

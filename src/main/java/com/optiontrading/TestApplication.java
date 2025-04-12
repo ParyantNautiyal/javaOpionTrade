@@ -293,10 +293,11 @@ public class TestApplication {
         System.out.println("\n== Refreshing Instruments ==");
 
         if (!kiteClient.isAuthenticated()) {
-            System.out.println("Not authenticated with Kite Connect. Using mock data.");
+            System.out.println("Not authenticated with Kite Connect. Please login first.");
+            return;
         }
 
-        instrumentService.refreshInstruments();
+        instrumentService.refreshInstruments(false); // Always use real API data
         System.out.println("Instruments refreshed successfully");
     }
 

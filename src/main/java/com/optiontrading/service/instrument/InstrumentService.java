@@ -16,6 +16,17 @@ import java.util.function.Predicate;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.ObjectOutputStream;
+import java.io.FileInputStream;
+import java.io.ObjectInputStream;
+import java.io.IOException;
+import java.util.Properties;
+import java.util.Objects;
+import java.time.format.DateTimeFormatter;
+import java.time.Year;
+import java.time.DayOfWeek;
 
 /**
  * Service for downloading and managing instruments
@@ -37,6 +48,8 @@ public class InstrumentService {
     private final CacheManager cacheManager;
     private final EventBus eventBus;
     private final KiteConnectClient kiteClient;
+
+    private static final String INSTRUMENTS_DIR = "data/instruments";
 
     /**
      * Constructor for dependency injection
@@ -164,173 +177,252 @@ public class InstrumentService {
     }
 
     /**
-     * Initialize with mock data for testing
+     * Download instruments from the Kite API
      */
-    private void initializeMockData() {
-        LOGGER.info("Initializing mock instrument data");
+    private void downloadInstruments() {
+        LOGGER.info("Downloading only index-related instruments...");
 
-        // Clear existing instruments
-        instruments.clear();
-
-        // Set up some indices
-        indexSpotPrices.put("NIFTY", BigDecimal.valueOf(19500.0));
-        indexSpotPrices.put("BANKNIFTY", BigDecimal.valueOf(45000.0));
-        indexSpotPrices.put("FINNIFTY", BigDecimal.valueOf(22000.0));
-        indexSpotPrices.put("SENSEX", BigDecimal.valueOf(65000.0));
-        indexSpotPrices.put("BANKEX", BigDecimal.valueOf(48000.0));
-
-        // Create some expiry dates
-        LocalDate currentDate = LocalDate.now();
-        LocalDate weeklyExpiry = currentDate.plusDays((4 - currentDate.getDayOfWeek().getValue() + 7) % 7);
-        LocalDate monthlyExpiry = currentDate.withDayOfMonth(currentDate.lengthOfMonth());
-
-        // Generate mock instruments for NFO exchange
-        createMockOptionsChain("NIFTY", weeklyExpiry, BigDecimal.valueOf(19500.0), 100, 5, "NFO");
-        createMockOptionsChain("NIFTY", monthlyExpiry, BigDecimal.valueOf(19500.0), 100, 10, "NFO");
-        createMockOptionsChain("BANKNIFTY", weeklyExpiry, BigDecimal.valueOf(45000.0), 100, 10, "NFO");
-        createMockOptionsChain("BANKNIFTY", monthlyExpiry, BigDecimal.valueOf(45000.0), 100, 15, "NFO");
-        createMockOptionsChain("FINNIFTY", weeklyExpiry, BigDecimal.valueOf(22000.0), 50, 5, "NFO");
-
-        // Generate a few mock instruments for BFO exchange
-        createMockOptionsChain("SENSEX", weeklyExpiry, BigDecimal.valueOf(65000.0), 500, 5, "BFO");
-        createMockOptionsChain("BANKEX", weeklyExpiry, BigDecimal.valueOf(48000.0), 500, 5, "BFO");
-
-        LOGGER.info("Created " + instruments.size() + " mock instruments");
-    }
-
-    /**
-     * Create a mock options chain for testing
-     * 
-     * @param indexSymbol the index symbol
-     * @param expiryDate  the expiry date
-     * @param spotPrice   the spot price
-     * @param strikeStep  the step between strike prices
-     * @param numStrikes  the number of strikes to generate (above and below spot)
-     * @param exchange    the exchange (NFO or BFO)
-     */
-    private void createMockOptionsChain(String indexSymbol, LocalDate expiryDate,
-            BigDecimal spotPrice, int strikeStep, int numStrikes, String exchange) {
-        // Round spot price to nearest strikeStep
-        BigDecimal baseStrike = BigDecimal.valueOf(
-                Math.round(spotPrice.doubleValue() / strikeStep) * strikeStep);
-
-        // Generate strikes above and below spot
-        for (int i = -numStrikes; i <= numStrikes; i++) {
-            BigDecimal strike = baseStrike.add(BigDecimal.valueOf(i * strikeStep));
-
-            // Create CALL option
-            String callId = exchange + ":" + indexSymbol + expiryDate.toString().replace("-", "") + "C"
-                    + strike.intValue();
-            Instrument callOption = Instrument.builder()
-                    .instrumentId(callId)
-                    .tradingSymbol(indexSymbol + expiryDate.toString().replace("-", "") + "C" + strike.intValue())
-                    .exchange(exchange)
-                    .type(InstrumentType.OPTION)
-                    .underlyingSymbol(indexSymbol)
-                    .expiryDate(expiryDate)
-                    .strikePrice(strike)
-                    .optionType(OptionType.CALL)
-                    .lotSize(exchange.equals("NFO") ? 50 : 10) // Different lot sizes for different exchanges
-                    .build();
-
-            instruments.put(callId, callOption);
-
-            // Create PUT option
-            String putId = exchange + ":" + indexSymbol + expiryDate.toString().replace("-", "") + "P"
-                    + strike.intValue();
-            Instrument putOption = Instrument.builder()
-                    .instrumentId(putId)
-                    .tradingSymbol(indexSymbol + expiryDate.toString().replace("-", "") + "P" + strike.intValue())
-                    .exchange(exchange)
-                    .type(InstrumentType.OPTION)
-                    .underlyingSymbol(indexSymbol)
-                    .expiryDate(expiryDate)
-                    .strikePrice(strike)
-                    .optionType(OptionType.PUT)
-                    .lotSize(exchange.equals("NFO") ? 50 : 10) // Different lot sizes for different exchanges
-                    .build();
-
-            instruments.put(putId, putOption);
-        }
-    }
-
-    /**
-     * Refresh instruments from API or use cached data
-     * This should be called at application startup
-     * 
-     * @param forceRefresh true to force refresh from API, false to check cache
-     *                     first
-     * @return true if refresh was successful
-     */
-    public boolean refreshInstruments(boolean forceRefresh) {
-        LOGGER.info("Refreshing instruments (force=" + forceRefresh + ")");
-
-        // Check if we're authenticated
-        if (!kiteClient.isAuthenticated()) {
-            LOGGER.warning("Cannot download instruments - not authenticated with Kite API");
-            LOGGER.info("Using mock data instead");
-            initializeMockData();
-            return false;
-        }
-
-        // Check cache if not forcing refresh
-        if (!forceRefresh) {
-            try {
-                Map<String, Instrument> cachedInstruments = loadInstrumentsFromCache();
-                if (cachedInstruments != null && !cachedInstruments.isEmpty()) {
-                    LOGGER.info("Loaded " + cachedInstruments.size() + " instruments from cache");
-                    instruments.clear();
-                    instruments.putAll(cachedInstruments);
-
-                    // Get latest index prices
-                    updateIndexPrices();
-
-                    return true;
-                } else {
-                    LOGGER.info("No cached instruments found or cache is empty");
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.WARNING, "Error loading instruments from cache", e);
-            }
-        }
-
-        // Download fresh data
         try {
-            LOGGER.info("Downloading instruments from NFO and BFO exchanges...");
-            instruments.clear();
+            // Set of index symbols we're interested in - these are the ONLY ones we care
+            // about
+            Set<String> targetIndices = Set.of("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX");
+
+            // First download index instruments from NSE to get spot prices
+            LOGGER.info("Downloading indices from NSE...");
+            try {
+                List<Instrument> nseInstruments = kiteClient.getInstruments("NSE");
+                int indexCount = 0;
+                for (Instrument instrument : nseInstruments) {
+                    // Only keep the main indices we're interested in
+                    if (instrument.getType() == InstrumentType.INDEX &&
+                            targetIndices.contains(instrument.getTradingSymbol().toUpperCase())) {
+                        instruments.put(instrument.getInstrumentId(), instrument);
+                        indexCount++;
+                    }
+                }
+                LOGGER.info("Downloaded " + indexCount + " index instruments from NSE");
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error downloading index instruments from NSE", e);
+            }
 
             // Download instruments from NFO
             List<Instrument> nfoInstruments = kiteClient.getInstruments("NFO");
             int nfoCount = 0;
             for (Instrument instrument : nfoInstruments) {
-                instruments.put(instrument.getInstrumentId(), instrument);
-                nfoCount++;
+                // ALWAYS filter to only keep instruments related to our target indices
+                if (instrument.getUnderlyingSymbol() != null &&
+                        targetIndices.contains(instrument.getUnderlyingSymbol().toUpperCase())) {
+                    instruments.put(instrument.getInstrumentId(), instrument);
+                    nfoCount++;
+                }
             }
-            LOGGER.info("Downloaded " + nfoCount + " instruments from NFO");
+            LOGGER.info("Downloaded " + nfoCount + " index-related instruments from NFO");
 
             // Download instruments from BFO
             List<Instrument> bfoInstruments = kiteClient.getInstruments("BFO");
             int bfoCount = 0;
             for (Instrument instrument : bfoInstruments) {
-                instruments.put(instrument.getInstrumentId(), instrument);
-                bfoCount++;
+                // ALWAYS filter to only keep instruments related to our target indices
+                if (instrument.getUnderlyingSymbol() != null &&
+                        targetIndices.contains(instrument.getUnderlyingSymbol().toUpperCase())) {
+                    instruments.put(instrument.getInstrumentId(), instrument);
+                    bfoCount++;
+                }
             }
-            LOGGER.info("Downloaded " + bfoCount + " instruments from BFO");
-
-            LOGGER.info("Total instruments: " + instruments.size());
-
-            // Save to cache
-            saveInstrumentsToCache();
+            LOGGER.info("Downloaded " + bfoCount + " index-related instruments from BFO");
 
             // Get latest index prices
             updateIndexPrices();
 
-            return true;
+            // Save to cache
+            saveInstrumentsToCache();
+
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error downloading instruments", e);
-            LOGGER.info("Using mock data instead");
-            initializeMockData();
-            return false;
+            LOGGER.log(Level.SEVERE, "Error downloading instruments from API", e);
+            throw e; // Re-throw to be handled by the caller
+        }
+    }
+
+    /**
+     * Refresh the instrument data from API
+     */
+    public void refreshInstruments() {
+        // Check if we already have data files and they're not stale
+        if (!areDataFilesStale()) {
+            LOGGER.info("Using existing instrument data files (not stale)");
+            // Add call to log expiry dates even when using cached data
+            logCurrentExpiryDates();
+            return;
+        }
+
+        refreshInstrumentsAndSaveToFiles();
+    }
+
+    /**
+     * Refreshes all instruments from the API
+     */
+    public void refreshInstruments(boolean useMockData) {
+        LOGGER.info("Refreshing instruments from API");
+
+        // Clear existing instruments
+        instruments.clear();
+
+        try {
+            downloadInstruments();
+
+            // Filter to keep only index and related instruments
+            filterIndexRelatedInstruments();
+
+            // Organize data for efficient lookups
+            organizeInstrumentDataForLookups();
+
+            LOGGER.info("Instruments refreshed successfully");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error refreshing instruments", e);
+            throw new RuntimeException(
+                    "Failed to download instruments from API. Please check your connection and authentication status.",
+                    e);
+        }
+    }
+
+    /**
+     * Force refresh of instruments, bypassing the stale check.
+     * This will always download fresh index instruments from the API.
+     */
+    public void forceRefreshInstruments() {
+        LOGGER.info("Forcing refresh of index instruments from API...");
+        refreshInstrumentsAndSaveToFiles();
+    }
+
+    /**
+     * Kept for backward compatibility - same as forceRefreshInstruments()
+     * 
+     * @deprecated Use forceRefreshInstruments() instead
+     */
+    @Deprecated
+    public void forceRefreshIndexInstruments() {
+        forceRefreshInstruments();
+    }
+
+    /**
+     * Organizes instruments for efficient lookups
+     * This pre-computes certain mappings to make filtering faster
+     */
+    private void organizeInstrumentDataForLookups() {
+        LOGGER.info("Organizing instrument data for efficient lookups");
+
+        // Count types of instruments
+        long callOptions = instruments.values().stream()
+                .filter(i -> i.getOptionType() == OptionType.CALL)
+                .count();
+
+        long putOptions = instruments.values().stream()
+                .filter(i -> i.getOptionType() == OptionType.PUT)
+                .count();
+
+        long indices = instruments.values().stream()
+                .filter(i -> i.getType() == InstrumentType.INDEX)
+                .count();
+
+        // Count instruments by exchange
+        Map<String, Long> exchangeCounts = instruments.values().stream()
+                .collect(Collectors.groupingBy(Instrument::getExchange, Collectors.counting()));
+
+        // Count instruments by underlying
+        Map<String, Long> underlyingCounts = instruments.values().stream()
+                .filter(i -> i.getUnderlyingSymbol() != null)
+                .collect(Collectors.groupingBy(
+                        Instrument::getUnderlyingSymbol,
+                        Collectors.counting()));
+
+        // Log summary
+        StringBuilder summary = new StringBuilder();
+        summary.append("Instrument organization complete:\n");
+        summary.append("- Total instruments: ").append(instruments.size()).append("\n");
+        summary.append("- Call options: ").append(callOptions).append("\n");
+        summary.append("- Put options: ").append(putOptions).append("\n");
+        summary.append("- Indices: ").append(indices).append("\n");
+        summary.append("- By exchange: ").append(exchangeCounts).append("\n");
+
+        // Log top 5 underlyings
+        summary.append("- Top underlyings: ");
+        underlyingCounts.entrySet().stream()
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .limit(5)
+                .forEach(e -> summary.append(e.getKey()).append("(").append(e.getValue()).append(") "));
+
+        LOGGER.info(summary.toString());
+    }
+
+    /**
+     * Update index spot prices
+     */
+    private void updateIndexPrices() {
+        LOGGER.info("Updating index spot prices");
+
+        try {
+            // Get indices from instruments
+            List<String> indexIds = instruments.values().stream()
+                    .filter(i -> i.getType() == InstrumentType.INDEX)
+                    .map(Instrument::getInstrumentId)
+                    .collect(Collectors.toList());
+
+            if (indexIds.isEmpty()) {
+                LOGGER.severe("No indices found to update prices - this will cause trading errors!");
+                return;
+            }
+
+            // Log all indices we're looking for
+            LOGGER.info("Found " + indexIds.size() + " indices to update prices: " +
+                    instruments.values().stream()
+                            .filter(i -> i.getType() == InstrumentType.INDEX)
+                            .map(Instrument::getTradingSymbol)
+                            .collect(Collectors.joining(", ")));
+
+            // Get LTP for indices
+            Map<String, BigDecimal> prices = kiteClient.getLTP(indexIds);
+
+            // Check if prices is empty or null
+            if (prices == null || prices.isEmpty()) {
+                LOGGER.severe("Received empty price data from API - this will cause trading errors!");
+                return;
+            }
+
+            // Update index spot prices
+            for (Map.Entry<String, BigDecimal> entry : prices.entrySet()) {
+                String instrumentId = entry.getKey();
+                Instrument instrument = instruments.get(instrumentId);
+
+                if (instrument != null) {
+                    // For INDEX type instruments, use the tradingSymbol as the key
+                    // This is the actual index name (e.g., "NIFTY", "BANKNIFTY")
+                    String symbol = instrument.getTradingSymbol();
+                    BigDecimal price = entry.getValue();
+
+                    if (symbol != null && price != null) {
+                        indexSpotPrices.put(symbol.toUpperCase(), price);
+                        LOGGER.info("Updated index price: " + symbol + " = " + price);
+                    } else {
+                        LOGGER.warning("Missing symbol or price for instrument: " + instrumentId);
+                    }
+                } else {
+                    LOGGER.warning("Received price for unknown instrument: " + instrumentId);
+                }
+            }
+
+            // Verify we have prices for main indices
+            List<String> mainIndices = Arrays.asList("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX");
+            for (String index : mainIndices) {
+                if (!indexSpotPrices.containsKey(index)) {
+                    LOGGER.severe("Missing price for important index: " + index + " - this may cause trading errors!");
+                }
+            }
+
+            // Log all index prices to verify
+            LOGGER.info("Current index prices: " + indexSpotPrices);
+
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error updating index prices", e);
         }
     }
 
@@ -339,35 +431,9 @@ public class InstrumentService {
      */
     private void saveInstrumentsToCache() {
         try {
-            LOGGER.info("Saving " + instruments.size() + " instruments to cache");
-
-            // Create or get the instruments cache
-            if (!cacheManager.hasCache("instruments")) {
-                // Large max size, no TTL
-                cacheManager.createCache("instruments", 50000);
-            }
-
-            if (!cacheManager.hasCache("instruments_metadata")) {
-                // Small cache for metadata, no TTL
-                cacheManager.createCache("instruments_metadata", 100);
-            }
-
-            // Get the caches
-            CacheManager.BoundedCache<Object> instrumentsCache = cacheManager.getCache("instruments");
-            CacheManager.BoundedCache<Object> metadataCache = cacheManager.getCache("instruments_metadata");
-
-            // Clear existing data
-            instrumentsCache.clear();
-
-            // Save each instrument
-            for (Map.Entry<String, Instrument> entry : instruments.entrySet()) {
-                instrumentsCache.put(entry.getKey(), entry.getValue());
-            }
-
-            // Save metadata
-            metadataCache.put("last_updated", LocalDate.now().toString());
-
-            LOGGER.info("Instruments saved to cache successfully");
+            cacheManager.createCache("instruments", 1, 86400000); // 24 hour TTL
+            cacheManager.getCache("instruments").put("all", new HashMap<>(instruments));
+            LOGGER.info("Saved " + instruments.size() + " instruments to cache");
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error saving instruments to cache", e);
         }
@@ -376,47 +442,12 @@ public class InstrumentService {
     /**
      * Load instruments from cache
      * 
-     * @return the cached instruments or null if not available
+     * @return the cached instruments or null if not found
      */
+    @SuppressWarnings("unchecked")
     private Map<String, Instrument> loadInstrumentsFromCache() {
         try {
-            if (!cacheManager.hasCache("instruments") || !cacheManager.hasCache("instruments_metadata")) {
-                LOGGER.info("No instrument cache exists");
-                return null;
-            }
-
-            // Get the caches
-            CacheManager.BoundedCache<Instrument> instrumentsCache = cacheManager.getCache("instruments");
-            CacheManager.BoundedCache<String> metadataCache = cacheManager.getCache("instruments_metadata");
-
-            // Check if we have metadata
-            String lastUpdated = metadataCache.get("last_updated");
-            if (lastUpdated == null) {
-                LOGGER.info("No last_updated timestamp in cache");
-                return null;
-            }
-
-            // Check for staleness
-            if (isCacheStale(lastUpdated)) {
-                LOGGER.info("Cached instruments are stale (last updated: " + lastUpdated + ")");
-                return null;
-            }
-
-            // Build a map of all instruments in the cache
-            Map<String, Instrument> cachedInstruments = new HashMap<>();
-
-            // We need to iterate through the entire cache with keys
-            int count = 0;
-            for (String key : instrumentIds()) {
-                Instrument instrument = instrumentsCache.get(key);
-                if (instrument != null) {
-                    cachedInstruments.put(key, instrument);
-                    count++;
-                }
-            }
-
-            LOGGER.info("Loaded " + count + " instruments from cache");
-            return cachedInstruments;
+            return (Map<String, Instrument>) cacheManager.getCache("instruments").get("all");
         } catch (Exception e) {
             LOGGER.log(Level.WARNING, "Error loading instruments from cache", e);
             return null;
@@ -475,45 +506,492 @@ public class InstrumentService {
     }
 
     /**
-     * Update index prices from market data
+     * Pre-filter instruments based only on index and expiry
+     * This is an optimization to reduce processing time during order execution
+     * 
+     * @param indexSymbol the index symbol (e.g., "NIFTY")
+     * @param expiryDate  the expiry date
+     * @return filtered list of instruments
      */
-    private void updateIndexPrices() {
+    public List<Instrument> preFilterInstruments(String indexSymbol, LocalDate expiryDate) {
+        if (indexSymbol == null || expiryDate == null) {
+            return Collections.emptyList();
+        }
+
+        LOGGER.info("Pre-filtering instruments for " + indexSymbol + " with expiry " + expiryDate);
+
+        // Build filter
+        Predicate<Instrument> filter = instrument ->
+        // Must be an option
+        instrument.isOption() &&
+        // Only include supported exchanges (NFO, BFO)
+                SUPPORTED_FNO_EXCHANGES.contains(instrument.getExchange()) &&
+                // Match index
+                instrument.getUnderlyingSymbol().equalsIgnoreCase(indexSymbol) &&
+                // Match expiry
+                expiryDate.equals(instrument.getExpiryDate());
+
+        // Apply filter
+        List<Instrument> filtered = instruments.values().stream()
+                .filter(filter)
+                .collect(Collectors.toList());
+
+        LOGGER.info("Pre-filtered to " + filtered.size() + " instruments for " + indexSymbol + " with expiry "
+                + expiryDate);
+        return filtered;
+    }
+
+    /**
+     * Further filter pre-filtered instruments based on strike range
+     * This is used at T-25s when we know the current spot price
+     * 
+     * @param preFilteredInstruments instruments already filtered by index and
+     *                               expiry
+     * @param spotPrice              current spot price of the index
+     * @param threshold              the threshold for strike range calculation
+     * @return list of instruments within the strike range
+     */
+    public List<Instrument> applyStrikeFilter(List<Instrument> preFilteredInstruments,
+            BigDecimal spotPrice,
+            double threshold) {
+        if (preFilteredInstruments == null || preFilteredInstruments.isEmpty() || spotPrice == null) {
+            return Collections.emptyList();
+        }
+
+        LOGGER.info("Filtering " + preFilteredInstruments.size() +
+                " instruments by strike range around " + spotPrice +
+                " with threshold " + threshold + "%");
+
+        // Calculate strike range
+        BigDecimal lowerStrike = spotPrice.multiply(BigDecimal.valueOf(1 - threshold / 100));
+        BigDecimal upperStrike = spotPrice.multiply(BigDecimal.valueOf(1 + threshold / 100));
+
+        // Apply strike filter
+        List<Instrument> filteredInstruments = preFilteredInstruments.stream()
+                .filter(instrument -> instrument.getStrikePrice().compareTo(lowerStrike) >= 0 &&
+                        instrument.getStrikePrice().compareTo(upperStrike) <= 0)
+                .collect(Collectors.toList());
+
+        LOGGER.info("Selected " + filteredInstruments.size() +
+                " instruments within strike range " + lowerStrike + " to " + upperStrike);
+        return filteredInstruments;
+    }
+
+    /**
+     * Save instruments to files organized by underlying symbol and expiry date
+     */
+    private void saveInstrumentsToFiles() {
+        LOGGER.info("Saving instruments to files in " + INSTRUMENTS_DIR);
+
         try {
-            LOGGER.info("Updating index prices");
-
-            // List of index instruments to get prices for
-            List<String> indices = Arrays.asList(
-                    "NSE:NIFTY50",
-                    "NSE:BANKNIFTY",
-                    "NSE:FINNIFTY");
-
-            // Get current prices
-            Map<String, BigDecimal> prices = kiteClient.getLTP(indices);
-
-            // Update our index prices
-            if (prices.containsKey("NSE:NIFTY50")) {
-                indexSpotPrices.put("NIFTY", prices.get("NSE:NIFTY50"));
+            // Create directory if it doesn't exist
+            File instrumentsDir = new File(INSTRUMENTS_DIR);
+            if (!instrumentsDir.exists()) {
+                instrumentsDir.mkdirs();
             }
 
-            if (prices.containsKey("NSE:BANKNIFTY")) {
-                indexSpotPrices.put("BANKNIFTY", prices.get("NSE:BANKNIFTY"));
+            // Save metadata file with last update timestamp
+            File metadataFile = new File(INSTRUMENTS_DIR + "/metadata.properties");
+            Properties metadata = new Properties();
+            metadata.setProperty("last_updated", LocalDate.now().toString());
+            metadata.setProperty("total_instruments", String.valueOf(instruments.size()));
+
+            try (FileOutputStream fos = new FileOutputStream(metadataFile)) {
+                metadata.store(fos, "Instruments metadata");
             }
 
-            if (prices.containsKey("NSE:FINNIFTY")) {
-                indexSpotPrices.put("FINNIFTY", prices.get("NSE:FINNIFTY"));
+            // Group instruments by underlying symbol
+            Map<String, List<Instrument>> byUnderlying = instruments.values().stream()
+                    .filter(i -> i.getUnderlyingSymbol() != null)
+                    .collect(Collectors.groupingBy(Instrument::getUnderlyingSymbol));
+
+            // For each underlying symbol
+            for (Map.Entry<String, List<Instrument>> entry : byUnderlying.entrySet()) {
+                String symbol = entry.getKey();
+                List<Instrument> symbolInstruments = entry.getValue();
+
+                // Create directory for this symbol
+                File symbolDir = new File(INSTRUMENTS_DIR + "/" + symbol);
+                if (!symbolDir.exists()) {
+                    symbolDir.mkdirs();
+                }
+
+                // Group by expiry date
+                Map<LocalDate, List<Instrument>> byExpiry = symbolInstruments.stream()
+                        .filter(i -> i.getExpiryDate() != null)
+                        .collect(Collectors.groupingBy(Instrument::getExpiryDate));
+
+                // For each expiry date
+                for (Map.Entry<LocalDate, List<Instrument>> expiryEntry : byExpiry.entrySet()) {
+                    LocalDate expiry = expiryEntry.getKey();
+                    List<Instrument> expiryInstruments = expiryEntry.getValue();
+
+                    // Save to file named by expiry date
+                    String filename = expiry.toString() + ".dat";
+                    File expiryFile = new File(symbolDir, filename);
+
+                    try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(expiryFile))) {
+                        oos.writeObject(new ArrayList<>(expiryInstruments));
+                    }
+                }
+
+                // Save a list of available expiry dates for this symbol
+                List<LocalDate> expiryDates = new ArrayList<>(byExpiry.keySet());
+                Collections.sort(expiryDates);
+
+                File expiryListFile = new File(symbolDir, "expiries.dat");
+                try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(expiryListFile))) {
+                    oos.writeObject(expiryDates);
+                }
             }
 
-            LOGGER.info("Updated index prices: " + indexSpotPrices);
+            // Save a list of all underlying symbols
+            List<String> allSymbols = new ArrayList<>(byUnderlying.keySet());
+            Collections.sort(allSymbols);
+
+            File symbolsFile = new File(INSTRUMENTS_DIR, "symbols.dat");
+            try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(symbolsFile))) {
+                oos.writeObject(allSymbols);
+            }
+
+            LOGGER.info("Successfully saved instruments to files");
+
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error updating index prices", e);
+            LOGGER.log(Level.SEVERE, "Error saving instruments to files", e);
         }
     }
 
     /**
-     * Refresh instruments from API
-     * Legacy method that calls refreshInstruments(true)
+     * Load available underlying symbols from file
+     * 
+     * @return list of underlying symbols or empty list if file doesn't exist
      */
-    public void refreshInstruments() {
-        refreshInstruments(true);
+    @SuppressWarnings("unchecked")
+    public List<String> loadAvailableSymbols() {
+        File symbolsFile = new File(INSTRUMENTS_DIR, "symbols.dat");
+        if (!symbolsFile.exists()) {
+            return Collections.emptyList();
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(symbolsFile))) {
+            return (List<String>) ois.readObject();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error loading symbols file", e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Load available expiry dates for a symbol from file
+     * 
+     * @param symbol the underlying symbol
+     * @return list of expiry dates or empty list if file doesn't exist
+     */
+    @SuppressWarnings("unchecked")
+    public List<LocalDate> loadAvailableExpiries(String symbol) {
+        File expiryListFile = new File(INSTRUMENTS_DIR + "/" + symbol, "expiries.dat");
+        if (!expiryListFile.exists()) {
+            return Collections.emptyList();
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(expiryListFile))) {
+            return (List<LocalDate>) ois.readObject();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error loading expiry list for " + symbol, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Load instruments for a specific underlying symbol and expiry date
+     * 
+     * @param symbol the underlying symbol
+     * @param expiry the expiry date
+     * @return list of instruments or empty list if file doesn't exist
+     */
+    @SuppressWarnings("unchecked")
+    public List<Instrument> loadInstrumentsForSymbolAndExpiry(String symbol, LocalDate expiry) {
+        String filename = expiry.toString() + ".dat";
+        File expiryFile = new File(INSTRUMENTS_DIR + "/" + symbol, filename);
+        if (!expiryFile.exists()) {
+            return Collections.emptyList();
+        }
+
+        try (ObjectInputStream ois = new ObjectInputStream(new FileInputStream(expiryFile))) {
+            List<Instrument> loadedInstruments = (List<Instrument>) ois.readObject();
+
+            // Add to runtime cache
+            for (Instrument instrument : loadedInstruments) {
+                instruments.put(instrument.getInstrumentId(), instrument);
+            }
+
+            return loadedInstruments;
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error loading instruments for " + symbol + " expiry " + expiry, e);
+            return Collections.emptyList();
+        }
+    }
+
+    /**
+     * Check if instruments data files are stale (older than today)
+     * 
+     * @return true if data files are stale or don't exist
+     */
+    public boolean areDataFilesStale() {
+        File metadataFile = new File(INSTRUMENTS_DIR + "/metadata.properties");
+        if (!metadataFile.exists()) {
+            return true;
+        }
+
+        try {
+            Properties metadata = new Properties();
+            try (FileInputStream fis = new FileInputStream(metadataFile)) {
+                metadata.load(fis);
+            }
+
+            String lastUpdated = metadata.getProperty("last_updated");
+            return isCacheStale(lastUpdated);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error checking if data files are stale", e);
+            return true;
+        }
+    }
+
+    /**
+     * Refresh the instrument data from API and save to files
+     */
+    public void refreshInstrumentsAndSaveToFiles() {
+        LOGGER.info("Refreshing instruments from API and saving to files");
+
+        // Clear existing instruments
+        instruments.clear();
+
+        try {
+            downloadInstruments();
+
+            // Organize data for efficient lookups
+            organizeInstrumentDataForLookups();
+
+            // Log expiry dates for main indices
+            logExpiryDatesForMainIndices();
+
+            // Save to files
+            saveInstrumentsToFiles();
+
+            // Also save to cache for current session
+            saveInstrumentsToCache();
+
+            LOGGER.info("Successfully loaded and saved " + instruments.size() + " instruments");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error refreshing instruments", e);
+            throw new RuntimeException(
+                    "Failed to download instruments from API. Please check your connection and authentication status.",
+                    e);
+        }
+    }
+
+    /**
+     * Log available expiry dates for main indices
+     */
+    private void logExpiryDatesForMainIndices() {
+        String[] mainIndices = { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX" };
+
+        for (String index : mainIndices) {
+            List<LocalDate> expiryDates = getAllOptionInstruments().stream()
+                    .filter(i -> index.equals(i.getUnderlyingSymbol()))
+                    .map(Instrument::getExpiryDate)
+                    .filter(Objects::nonNull) // Filter out null expiry dates
+                    .distinct()
+                    .sorted()
+                    .collect(Collectors.toList());
+
+            if (!expiryDates.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("Available expiry dates for ").append(index).append(": ");
+
+                for (LocalDate date : expiryDates) {
+                    // Date is guaranteed to be non-null here
+                    sb.append(date.format(java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy"))).append(", ");
+                }
+
+                // Remove trailing comma and space
+                if (sb.length() > 2) {
+                    sb.setLength(sb.length() - 2);
+                }
+
+                LOGGER.info(sb.toString());
+            } else {
+                LOGGER.info("No expiry dates found for " + index);
+            }
+        }
+
+        // Log a warning if we received instruments with null expiry dates
+        long nullExpiryCount = getAllOptionInstruments().stream()
+                .filter(i -> i.getExpiryDate() == null)
+                .count();
+
+        if (nullExpiryCount > 0) {
+            LOGGER.warning("Found " + nullExpiryCount + " option instruments with NULL expiry dates");
+        }
+    }
+
+    /**
+     * Logs expiry dates for main indices from currently loaded instruments.
+     * This method can be called at any time to output currently available expiry
+     * dates
+     * without requiring a fresh download of instrument data.
+     */
+    public void logCurrentExpiryDates() {
+        LOGGER.info("Loading instruments from cached files...");
+
+        // Load cached instruments if the map is empty
+        if (instruments.isEmpty()) {
+            String[] mainIndices = { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX" };
+            for (String symbol : mainIndices) {
+                List<LocalDate> expiries = loadAvailableExpiries(symbol);
+                if (expiries != null && !expiries.isEmpty()) {
+                    for (LocalDate expiry : expiries) {
+                        loadInstrumentsForSymbolAndExpiry(symbol, expiry);
+                    }
+                }
+            }
+        }
+
+        // Now log expiry dates from the loaded data
+        LOGGER.info("Logging expiry dates from currently loaded instruments...");
+        logExpiryDatesForMainIndices();
+    }
+
+    /**
+     * Filter to keep only index and related instruments
+     */
+    private void filterIndexRelatedInstruments() {
+        Set<String> targetIndices = new HashSet<>(Arrays.asList("NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX"));
+
+        // Count before filtering
+        int beforeCount = instruments.size();
+        LOGGER.info("Total instruments before filtering: " + beforeCount);
+
+        // First, keep all INDEX type instruments regardless of symbol
+        // (we'll need these for price lookups)
+        Map<String, Instrument> filteredInstruments = instruments.values().stream()
+                .filter(i -> i.getType() == InstrumentType.INDEX ||
+                        (i.getUnderlyingSymbol() != null &&
+                                targetIndices.contains(i.getUnderlyingSymbol().toUpperCase())))
+                .collect(Collectors.toMap(Instrument::getInstrumentId, i -> i));
+
+        // Log and store the filtered instruments
+        int afterCount = filteredInstruments.size();
+        LOGGER.info("Kept " + afterCount + " index-related instruments out of " + beforeCount + " total");
+
+        // Clear and add all filtered instruments
+        instruments.clear();
+        instruments.putAll(filteredInstruments);
+
+        // Log all kept indices to verify
+        List<String> keptIndices = instruments.values().stream()
+                .filter(i -> i.getType() == InstrumentType.INDEX)
+                .map(i -> i.getTradingSymbol() + " (" + i.getInstrumentId() + ")")
+                .collect(Collectors.toList());
+        LOGGER.info("Kept indices: " + keptIndices);
+    }
+
+    /**
+     * Gets the last Thursday of the specified month
+     */
+    private LocalDate getLastThursday(int year, int month) {
+        // Handle month overflow
+        if (month > 12) {
+            year += month / 12;
+            month = month % 12;
+            if (month == 0) {
+                month = 12;
+                year--;
+            }
+        }
+
+        LocalDate lastDay = Year.of(year).atMonth(month).atEndOfMonth();
+        LocalDate lastThursday = lastDay;
+
+        while (lastThursday.getDayOfWeek() != DayOfWeek.THURSDAY) {
+            lastThursday = lastThursday.minusDays(1);
+        }
+
+        return lastThursday;
+    }
+
+    /**
+     * Find options at a specific strike price
+     * 
+     * @param underlyingSymbol The underlying symbol (e.g., "NIFTY")
+     * @param expiryDate       The expiry date
+     * @param strikePrice      The strike price to look for
+     * @param optionType       CALL or PUT
+     * @return List of matching instruments
+     */
+    public List<Instrument> findOptionsAtStrike(String underlyingSymbol, LocalDate expiryDate,
+            BigDecimal strikePrice, OptionType optionType) {
+        LOGGER.info("Finding options for " + underlyingSymbol + " expiry " + expiryDate +
+                " at strike " + strikePrice + " type " + optionType);
+
+        if (instruments.isEmpty()) {
+            LOGGER.warning("No instruments loaded, cannot find options");
+            return Collections.emptyList();
+        }
+
+        // Build filter
+        Predicate<Instrument> filter = instrument -> instrument.isOption() &&
+                instrument.getOptionType() == optionType &&
+                SUPPORTED_FNO_EXCHANGES.contains(instrument.getExchange()) &&
+                instrument.getUnderlyingSymbol() != null &&
+                instrument.getUnderlyingSymbol().equalsIgnoreCase(underlyingSymbol) &&
+                expiryDate.equals(instrument.getExpiryDate()) &&
+                instrument.getStrikePrice() != null &&
+                instrument.getStrikePrice().compareTo(strikePrice) == 0;
+
+        // Apply filter
+        List<Instrument> result = instruments.values().stream()
+                .filter(filter)
+                .collect(Collectors.toList());
+
+        LOGGER.info("Found " + result.size() + " options at strike " + strikePrice);
+
+        // If no exact match, try to find the closest strike
+        if (result.isEmpty()) {
+            LOGGER.info("No exact match, finding closest strike");
+
+            // Relaxed filter without strike price constraint
+            Predicate<Instrument> relaxedFilter = instrument -> instrument.isOption() &&
+                    instrument.getOptionType() == optionType &&
+                    SUPPORTED_FNO_EXCHANGES.contains(instrument.getExchange()) &&
+                    instrument.getUnderlyingSymbol() != null &&
+                    instrument.getUnderlyingSymbol().equalsIgnoreCase(underlyingSymbol) &&
+                    expiryDate.equals(instrument.getExpiryDate()) &&
+                    instrument.getStrikePrice() != null;
+
+            // Find all options for this expiry and type
+            List<Instrument> allOptions = instruments.values().stream()
+                    .filter(relaxedFilter)
+                    .collect(Collectors.toList());
+
+            if (!allOptions.isEmpty()) {
+                // Find the closest strike
+                Instrument closestOption = allOptions.stream()
+                        .min((a, b) -> {
+                            BigDecimal diffA = a.getStrikePrice().subtract(strikePrice).abs();
+                            BigDecimal diffB = b.getStrikePrice().subtract(strikePrice).abs();
+                            return diffA.compareTo(diffB);
+                        })
+                        .orElse(null);
+
+                if (closestOption != null) {
+                    LOGGER.info("Found closest option at strike " + closestOption.getStrikePrice() +
+                            " instead of requested " + strikePrice);
+                    return Collections.singletonList(closestOption);
+                }
+            }
+        }
+
+        return result;
     }
 }

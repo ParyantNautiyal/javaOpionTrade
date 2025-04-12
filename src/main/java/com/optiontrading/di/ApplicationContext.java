@@ -11,8 +11,10 @@ import com.optiontrading.service.auth.KiteAuthService;
 import com.optiontrading.service.instrument.InstrumentService;
 import com.optiontrading.service.market.MarketDataProvider;
 import com.optiontrading.service.market.MarketDataService;
+import com.optiontrading.service.order.OrderExecutionCoordinator;
 
 import java.util.logging.Logger;
+import java.util.Scanner;
 
 /**
  * Application context for dependency injection
@@ -83,6 +85,12 @@ public class ApplicationContext {
             MarketDataService marketDataService = new MarketDataProvider(tradingApiClient, eventBus);
             serviceRegistry.registerSingleton(MarketDataService.class, marketDataService);
 
+            // Initialize and register OrderExecutionCoordinator
+            // This is essential for order execution flow to work
+            OrderExecutionCoordinator orderExecutionCoordinator = OrderExecutionCoordinator.getInstance();
+            serviceRegistry.registerSingleton(OrderExecutionCoordinator.class, orderExecutionCoordinator);
+            LOGGER.info("Registered OrderExecutionCoordinator singleton");
+
         } catch (Exception e) {
             LOGGER.severe("Error initializing services: " + e.getMessage());
             throw new RuntimeException("Failed to initialize services", e);
@@ -90,91 +98,171 @@ public class ApplicationContext {
     }
 
     /**
-     * Ensure Kite API authentication is complete before starting services
+     * Ensure that we're authenticated with Kite API
      * 
-     * @return true if authentication was successful
+     * @return true if authenticated, false if not
      */
     public boolean ensureAuthenticated() {
-        TradingApiClient tradingApiClient = getService(TradingApiClient.class);
+        return ensureAuthenticated(false);
+    }
+
+    /**
+     * Ensure that we're authenticated with Kite API
+     * 
+     * @param interactive whether to use interactive mode for re-authentication
+     * @return true if authenticated, false if not
+     */
+    public boolean ensureAuthenticated(boolean interactive) {
         AuthService authService = getService(AuthService.class);
+        TradingApiClient tradingApiClient = getService(TradingApiClient.class);
 
-        // First check if the API client says it's authenticated
+        // Check if we're already authenticated
         if (tradingApiClient.isAuthenticated()) {
-            LOGGER.info("Authentication token available, verifying API connectivity...");
-
-            // Verify API connectivity with a test call
-            boolean apiConnected = tradingApiClient.testConnection();
-            if (apiConnected) {
-                LOGGER.info("API connection verified successfully");
-                return true;
-            } else {
-                LOGGER.warning(
-                        "API connectivity test failed despite having valid tokens. Will attempt re-authentication.");
-                // Continue to re-authentication below
-            }
-        } else {
-            LOGGER.info("Authentication required with Kite API");
+            LOGGER.info("Already authenticated with Kite API");
+            return true;
         }
 
-        // Check if we need to login
-        if (authService.needsLogin()) {
-            // Show login URL and wait for request token
-            String loginUrl = authService.getLoginUrl();
-            System.out.println("\n==================================================");
-            System.out.println("Please visit the following URL to login to Kite:");
-            System.out.println(loginUrl);
-            System.out.println("==================================================\n");
-
-            // Wait for request token input
-            System.out.print("Enter the request token after authentication: ");
+        // Check if we have a valid access token
+        if (authService.isAccessTokenValid()) {
+            LOGGER.info("Authentication token available, verifying API connectivity...");
 
             try {
-                // Use BufferedReader for proper line reading
-                java.io.BufferedReader reader = new java.io.BufferedReader(
-                        new java.io.InputStreamReader(System.in));
-                String requestToken = reader.readLine().trim();
+                // Test API connectivity
+                boolean apiConnected = tradingApiClient.testConnection();
+                if (!apiConnected) {
+                    LOGGER.warning(
+                            "API connectivity test failed despite having valid tokens. Will attempt re-authentication.");
 
-                if (requestToken == null || requestToken.isEmpty()) {
-                    LOGGER.severe("Empty request token entered. Authentication failed.");
-                    return false;
-                }
+                    // Invalidate the current token since it's not working with the API
+                    authService.invalidateTokens();
 
-                // Generate access token
-                System.out.println("Authenticating with request token...");
-                String accessToken = authService.generateAccessToken(requestToken, null);
-
-                if (accessToken != null && !accessToken.isEmpty()) {
-                    System.out.println("Authentication successful!");
-
-                    // Verify API connectivity after authentication
-                    boolean apiConnected = tradingApiClient.testConnection();
-                    if (!apiConnected) {
-                        LOGGER.severe("Authentication succeeded but API connectivity test failed.");
+                    if (interactive) {
+                        // In interactive mode, try to re-authenticate
+                        return reAuthenticateInteractively();
+                    } else {
                         return false;
                     }
+                }
 
-                    return true;
+                return true;
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.SEVERE, "Error during API connectivity test", e);
+
+                if (interactive) {
+                    // In interactive mode, try to re-authenticate
+                    return reAuthenticateInteractively();
                 } else {
-                    System.out.println("Authentication failed. Invalid token.");
                     return false;
                 }
-            } catch (Exception e) {
-                LOGGER.log(java.util.logging.Level.SEVERE, "Error during authentication", e);
-                System.out.println("Authentication failed: " + e.getMessage());
-                return false;
             }
         } else if (!authService.isAccessTokenValid()) {
             // Token is invalid but we can't refresh it automatically
-            LOGGER.warning("Access token is invalid but no re-login required. Forcing re-authentication.");
+            LOGGER.warning("Access token is invalid. Forcing re-authentication.");
 
             // Invalidate the current tokens to force a new login flow
             authService.invalidateTokens();
 
-            // Retry authentication - recursive call but will take the re-login path now
-            return ensureAuthenticated();
+            if (interactive) {
+                // In interactive mode, try to re-authenticate
+                return reAuthenticateInteractively();
+            } else {
+                // Retry authentication - recursive call but will take the re-login path now
+                return ensureAuthenticated(false);
+            }
         }
 
         return tradingApiClient.isAuthenticated();
+    }
+
+    /**
+     * Re-authenticate interactively with user input
+     * 
+     * @return true if re-authentication succeeds, false otherwise
+     */
+    public boolean reAuthenticateInteractively() {
+        AuthService authService = getService(AuthService.class);
+        TradingApiClient tradingApiClient = getService(TradingApiClient.class);
+
+        try {
+            Scanner scanner = new Scanner(System.in);
+
+            System.out.println("\n===== AUTHENTICATION REQUIRED =====");
+
+            // Check if we have API credentials
+            if (!authService.hasApiCredentials()) {
+                System.out.println("API credentials not found. Please enter your Kite API credentials:");
+                System.out.print("API Key: ");
+                String apiKey = scanner.nextLine().trim();
+                System.out.print("API Secret: ");
+                String apiSecret = scanner.nextLine().trim();
+
+                // Set credentials
+                authService.setApiCredentials(apiKey, apiSecret);
+                System.out.println("API credentials saved.");
+            }
+
+            // Generate login URL
+            String loginUrl = authService.getLoginUrl();
+            System.out.println("\nPlease login using the following URL:");
+            System.out.println(loginUrl);
+            System.out.println("\nAfter logging in, you will be redirected to a URL containing a request token.");
+            System.out.println("Please enter the request token from the URL:");
+            String requestToken = scanner.nextLine().trim();
+
+            if (requestToken.isEmpty()) {
+                System.out.println("Request token cannot be empty. Authentication failed.");
+                return false;
+            }
+
+            // Set request token and generate access token
+            authService.setRequestToken(requestToken);
+            String accessToken = authService.generateAccessToken(requestToken, null);
+
+            if (accessToken != null && !accessToken.isEmpty()) {
+                System.out.println("Access token generated successfully!");
+
+                // Test API connectivity with the new token
+                boolean apiConnected = tradingApiClient.testConnection();
+                if (apiConnected) {
+                    System.out.println("API connectivity verified. Authentication successful!");
+                    return true;
+                } else {
+                    System.out.println("API connectivity test failed with the new token. Authentication failed.");
+                    return false;
+                }
+            } else {
+                System.out.println("Failed to generate access token. Authentication failed.");
+                return false;
+            }
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.SEVERE, "Error during interactive re-authentication", e);
+            System.out.println("Authentication error: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Re-authenticate and restart authenticated services
+     * This can be called from the main menu
+     * 
+     * @return true if re-authentication and services restart succeeded
+     */
+    public boolean reAuthenticateAndRestartServices() {
+        boolean authenticated = ensureAuthenticated(true);
+
+        if (authenticated) {
+            try {
+                // Restart authenticated services
+                startAuthenticatedServices();
+                return true;
+            } catch (Exception e) {
+                LOGGER.log(java.util.logging.Level.SEVERE, "Error restarting services after re-authentication", e);
+                System.out.println("Error restarting services: " + e.getMessage());
+                return false;
+            }
+        }
+
+        return false;
     }
 
     /**
@@ -195,7 +283,7 @@ public class ApplicationContext {
         LOGGER.info("Starting authenticated services...");
 
         // Load instruments first (they're needed by MarketDataProvider)
-        instrumentService.refreshInstruments(false);
+        instrumentService.forceRefreshInstruments();
 
         // Start market data service
         marketDataService.start();

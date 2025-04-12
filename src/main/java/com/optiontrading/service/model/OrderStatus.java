@@ -6,6 +6,7 @@ package com.optiontrading.service.model;
 public enum OrderStatus {
     SCHEDULED, // Order is scheduled but not yet in execution process
     PREPARING, // T-25: Starting to prepare for execution
+    ANALYZING, // Analyzing option chains
     MONITORING, // Monitoring option chain for best options
     HEDGING, // T-10: Executing hedge orders
     EXECUTING, // T-0: Executing main orders

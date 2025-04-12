@@ -1,5 +1,6 @@
 package com.optiontrading.service.model;
 
+import java.io.Serializable;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.Objects;
@@ -7,7 +8,9 @@ import java.util.Objects;
 /**
  * Represents a tradable instrument in the market
  */
-public class Instrument {
+public class Instrument implements Serializable {
+    private static final long serialVersionUID = 1L;
+
     private final String instrumentId;
     private final String tradingSymbol;
     private final String exchange;

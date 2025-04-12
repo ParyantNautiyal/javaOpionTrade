@@ -674,4 +674,35 @@ public class KiteAuthService implements AuthService {
             throw new RuntimeException("API credentials are not set");
         }
     }
+
+    /**
+     * Update API credentials and save them
+     * 
+     * @param apiKey    the API key
+     * @param apiSecret the API secret
+     */
+    public void updateCredentials(String apiKey, String apiSecret) {
+        if (apiKey == null || apiKey.isEmpty() || apiSecret == null || apiSecret.isEmpty()) {
+            throw new IllegalArgumentException("API key and secret cannot be null or empty");
+        }
+
+        LOGGER.info("Updating API credentials");
+        this.apiKey = apiKey;
+        this.apiSecret = apiSecret;
+
+        // Update the properties
+        credentials.setProperty(API_KEY, apiKey);
+        credentials.setProperty(API_SECRET, apiSecret);
+
+        // Save to file
+        saveCredentials();
+
+        // Invalidate existing tokens since we changed credentials
+        invalidateTokens();
+
+        // Publish event
+        eventBus.publishAsync(new ApiCredentialsUpdatedEvent(apiKey));
+
+        LOGGER.info("API credentials updated successfully");
+    }
 }

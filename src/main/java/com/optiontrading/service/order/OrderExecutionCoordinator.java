@@ -11,8 +11,11 @@ import com.optiontrading.service.model.OptionPair;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.option.BestOptionsUpdatedEvent;
 import com.optiontrading.service.option.OptionChainService;
+import com.optiontrading.service.trading.TradingService;
+import com.optiontrading.service.model.OptionType;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
@@ -137,9 +140,42 @@ public class OrderExecutionCoordinator {
             return;
         }
 
+        // Pre-filter instruments immediately to reduce API overhead later
+        preFilterInstrumentsForOrder(order);
+
         // If execution is within 5 minutes, start preparation immediately
         if (order.getExecutionTime().isBefore(LocalDateTime.now().plusMinutes(5))) {
             scheduleOrderPreparation(order);
+        }
+    }
+
+    /**
+     * Pre-filter instruments based on index and expiry when order is scheduled
+     * 
+     * @param order the scheduled order
+     */
+    private void preFilterInstrumentsForOrder(ScheduledOrder order) {
+        try {
+            String orderId = order.getOrderId();
+            String indexSymbol = order.getParams().getIndexSymbol();
+            LocalDate expiryDate = order.getParams().getExpiryDate();
+
+            LOGGER.info("Pre-filtering instruments for order " + orderId +
+                    " (index: " + indexSymbol + ", expiry: " + expiryDate + ")");
+
+            // Get pre-filtered instruments based only on index and expiry
+            List<Instrument> preFilteredInstruments = instrumentService.preFilterInstruments(indexSymbol, expiryDate);
+
+            // Store pre-filtered list with the order repository for later use
+            orderRepository.storePreFilteredInstruments(orderId, preFilteredInstruments);
+
+            LOGGER.info("Stored " + preFilteredInstruments.size() +
+                    " pre-filtered instruments for order " + orderId);
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error pre-filtering instruments for order " +
+                    order.getOrderId(), e);
+            // Continue with order scheduling despite pre-filtering error
+            // We'll retry filtering at T-25s if needed
         }
     }
 
@@ -184,7 +220,7 @@ public class OrderExecutionCoordinator {
             // Update order status
             orderRepository.updateOrderStatus(orderId, OrderStatus.PREPARING);
 
-            // Get eligible instruments
+            // Get current spot price for the index
             String indexSymbol = order.getParams().getIndexSymbol();
             BigDecimal spotPrice = instrumentService.getIndexSpotPrice(indexSymbol);
 
@@ -194,11 +230,21 @@ public class OrderExecutionCoordinator {
                 return;
             }
 
-            List<Instrument> eligibleInstruments = instrumentService.filterInstruments(
-                    indexSymbol,
-                    order.getParams().getExpiryDate(),
-                    spotPrice,
-                    order.getParams().getThreshold());
+            // Get pre-filtered instruments (by index and expiry)
+            List<Instrument> preFilteredInstruments = orderRepository.getPreFilteredInstruments(orderId);
+
+            // If pre-filtered list is empty or not found, try filtering again
+            if (preFilteredInstruments == null || preFilteredInstruments.isEmpty()) {
+                LOGGER.warning("No pre-filtered instruments found for order " + orderId +
+                        ", filtering now");
+                preFilteredInstruments = instrumentService.preFilterInstruments(
+                        indexSymbol, order.getParams().getExpiryDate());
+            }
+
+            // Apply strike filter based on current spot price
+            double threshold = order.getParams().getThreshold();
+            List<Instrument> eligibleInstruments = instrumentService.applyStrikeFilter(
+                    preFilteredInstruments, spotPrice, threshold);
 
             if (eligibleInstruments.isEmpty()) {
                 LOGGER.severe("No eligible instruments found for order: " + orderId);
@@ -208,26 +254,21 @@ public class OrderExecutionCoordinator {
 
             LOGGER.info("Found " + eligibleInstruments.size() + " eligible instruments for order: " + orderId);
 
-            // Create option chain service for monitoring options
-            OptionChainService service = new OptionChainService(
-                    orderId,
-                    order.getParams().getTargetPremium());
+            // Create option chain service for analyzing options
+            OptionChainService optionChainService = new OptionChainService(
+                    orderId, order.getParams().getTargetPremium());
 
-            // Start monitoring instruments
-            service.monitorInstruments(eligibleInstruments);
-            optionChainServices.put(orderId, service);
+            // Store the option chain service
+            optionChainServices.put(orderId, optionChainService);
+
+            // Start monitoring eligible instruments
+            optionChainService.monitorInstruments(eligibleInstruments);
 
             // Update order status
-            orderRepository.updateOrderStatus(orderId, OrderStatus.MONITORING);
+            orderRepository.updateOrderStatus(orderId, OrderStatus.ANALYZING);
 
-            // Schedule hedge orders if enabled
-            if (order.getParams().isHedgingEnabled()) {
-                scheduleHedgeOrders(order);
-            }
-
-            // Schedule main order execution
-            scheduleMainOrderExecution(order);
-
+            // Schedule hedge orders for T-10s
+            scheduleHedgeOrders(order);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error preparing order: " + orderId, e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
@@ -256,9 +297,9 @@ public class OrderExecutionCoordinator {
     }
 
     /**
-     * Execute hedge orders (T-10)
+     * Execute hedge orders at T-10s
      * 
-     * @param order the order
+     * @param order the order to execute hedge orders for
      */
     private void executeHedgeOrders(ScheduledOrder order) {
         String orderId = order.getOrderId();
@@ -266,35 +307,118 @@ public class OrderExecutionCoordinator {
         LOGGER.info("Executing hedge orders for order: " + orderId);
 
         try {
+            // Get the best option pair
+            OptionPair bestPair = bestOptionPairs.get(orderId);
+            if (bestPair == null) {
+                LOGGER.warning("No best option pair found for order: " + orderId);
+                orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+                cleanupOrder(orderId);
+                return;
+            }
+
+            // Check if hedging is enabled
+            if (!order.getParams().isHedgingEnabled()) {
+                LOGGER.info("Hedging not enabled for order: " + orderId + ", skipping hedge orders");
+                orderRepository.updateOrderStatus(orderId, OrderStatus.MONITORING);
+
+                // Schedule main order execution
+                scheduleMainOrderExecution(order);
+                return;
+            }
+
+            // Get hedge point difference
+            int hedgePoints = order.getParams().getHedgePointDifference();
+
+            // Get the call and put options from the best pair
+            Instrument callOption = bestPair.getCallOption();
+            Instrument putOption = bestPair.getPutOption();
+
+            // Calculate hedge strikes
+            BigDecimal callHedgeStrike = callOption.getStrikePrice().add(BigDecimal.valueOf(hedgePoints));
+            BigDecimal putHedgeStrike = putOption.getStrikePrice().subtract(BigDecimal.valueOf(hedgePoints));
+
+            LOGGER.info("Calculated hedge strikes - Call: " + callHedgeStrike + ", Put: " + putHedgeStrike);
+
+            // Find hedge instruments for the calculated strikes
+            List<Instrument> callHedgeOptions = instrumentService.findOptionsAtStrike(
+                    callOption.getUnderlyingSymbol(),
+                    callOption.getExpiryDate(),
+                    callHedgeStrike,
+                    OptionType.CALL);
+
+            List<Instrument> putHedgeOptions = instrumentService.findOptionsAtStrike(
+                    putOption.getUnderlyingSymbol(),
+                    putOption.getExpiryDate(),
+                    putHedgeStrike,
+                    OptionType.PUT);
+
+            // Import the TradingService
+            TradingService tradingService = TradingService.getInstance();
+
+            // Place call hedge order
+            if (!callHedgeOptions.isEmpty()) {
+                Instrument callHedgeOption = callHedgeOptions.get(0);
+                LOGGER.info("Placing call hedge order at strike " + callHedgeStrike +
+                        ": " + callHedgeOption.getTradingSymbol());
+
+                String brokerId = tradingService.placeOrder(
+                        callHedgeOption,
+                        order.getParams().getLots(),
+                        null, // Use market price
+                        order.getParams().getOrderType(),
+                        "HEDGE-" + orderId);
+
+                if (brokerId != null) {
+                    LOGGER.info("Call hedge order placed successfully, broker ID: " + brokerId);
+                } else {
+                    LOGGER.warning("Failed to place call hedge order");
+                }
+            } else {
+                LOGGER.warning("No hedge option found at strike " + callHedgeStrike);
+            }
+
+            // Add 500ms delay between orders to respect API rate limits
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOGGER.warning("Interrupted during order delay");
+            }
+
+            // Place put hedge order
+            if (!putHedgeOptions.isEmpty()) {
+                Instrument putHedgeOption = putHedgeOptions.get(0);
+                LOGGER.info("Placing put hedge order at strike " + putHedgeStrike +
+                        ": " + putHedgeOption.getTradingSymbol());
+
+                String brokerId = tradingService.placeOrder(
+                        putHedgeOption,
+                        order.getParams().getLots(),
+                        null, // Use market price
+                        order.getParams().getOrderType(),
+                        "HEDGE-" + orderId);
+
+                if (brokerId != null) {
+                    LOGGER.info("Put hedge order placed successfully, broker ID: " + brokerId);
+                } else {
+                    LOGGER.warning("Failed to place put hedge order");
+                }
+            } else {
+                LOGGER.warning("No hedge option found at strike " + putHedgeStrike);
+            }
+
             // Update order status
-            orderRepository.updateOrderStatus(orderId, OrderStatus.HEDGING);
+            orderRepository.updateOrderStatus(orderId, OrderStatus.MONITORING);
 
-            // Get the option chain service and best pair
-            OptionChainService service = optionChainServices.get(orderId);
-            if (service == null) {
-                LOGGER.severe("Option chain service not found for order: " + orderId);
-                return;
-            }
-
-            OptionPair bestPair = service.getCurrentBestPair();
-            if (bestPair == null || !bestPair.isComplete()) {
-                LOGGER.warning("No complete option pair available for hedging order: " + orderId);
-                return;
-            }
-
-            // Place hedge orders
-            // In a real implementation, this would call the broker API
-            // For now, we just log the action
-            int hedgePointDifference = order.getParams().getHedgePointDifference();
-
-            LOGGER.info("Placing hedge orders for order " + orderId +
-                    " with " + bestPair + " and hedge point difference: " + hedgePointDifference);
-
-            // Publish event (you would create this class)
+            // Publish event
             eventBus.publishAsync(new HedgeOrdersPlacedEvent(orderId, bestPair));
 
+            // Schedule main order execution
+            scheduleMainOrderExecution(order);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error executing hedge orders for order: " + orderId, e);
+            orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+            cleanupOrder(orderId);
         }
     }
 
@@ -320,9 +444,9 @@ public class OrderExecutionCoordinator {
     }
 
     /**
-     * Execute the main order (T-0)
+     * Execute main order at T-0
      * 
-     * @param order the order
+     * @param order the order to execute
      */
     private void executeMainOrder(ScheduledOrder order) {
         String orderId = order.getOrderId();
@@ -330,40 +454,78 @@ public class OrderExecutionCoordinator {
         LOGGER.info("Executing main order: " + orderId);
 
         try {
-            // Update order status
-            orderRepository.updateOrderStatus(orderId, OrderStatus.EXECUTING);
-
-            // Get the option chain service and best pair
-            OptionChainService service = optionChainServices.get(orderId);
-            if (service == null) {
-                LOGGER.severe("Option chain service not found for order: " + orderId);
+            // Get the best option pair
+            OptionPair bestPair = bestOptionPairs.get(orderId);
+            if (bestPair == null) {
+                LOGGER.warning("No best option pair found for order: " + orderId);
                 orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+                cleanupOrder(orderId);
                 return;
             }
 
-            OptionPair bestPair = service.getCurrentBestPair();
-            if (bestPair == null || !bestPair.isComplete()) {
-                LOGGER.warning("No complete option pair available for order: " + orderId);
-                orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
-                return;
+            // Get the order parameters
+            com.optiontrading.service.model.OrderType orderType = order.getParams().getOrderType();
+            int lots = order.getParams().getLots();
+
+            // Get the call and put options from the best pair
+            Instrument callOption = bestPair.getCallOption();
+            Instrument putOption = bestPair.getPutOption();
+            BigDecimal callPrice = bestPair.getCallPrice();
+            BigDecimal putPrice = bestPair.getPutPrice();
+
+            LOGGER.info("Executing " + orderType + " order for " + lots + " lots - " +
+                    "Call: " + callOption.getTradingSymbol() + " @ " + callPrice + ", " +
+                    "Put: " + putOption.getTradingSymbol() + " @ " + putPrice);
+
+            // Import the TradingService
+            TradingService tradingService = TradingService.getInstance();
+
+            // Place call option order
+            LOGGER.info("Placing order for call option: " + callOption.getInstrumentId());
+            String callOrderId = tradingService.placeOrder(
+                    callOption,
+                    lots,
+                    callPrice, // Use the price from the option pair
+                    orderType,
+                    "MAIN-" + orderId);
+
+            if (callOrderId != null) {
+                LOGGER.info("Call option order placed successfully, broker ID: " + callOrderId);
+            } else {
+                LOGGER.warning("Failed to place call option order");
             }
 
-            // Place main order
-            // In a real implementation, this would call the broker API
-            // For now, we just log the action
-            LOGGER.info("Placing main order " + orderId + " with " + bestPair +
-                    ", type: " + order.getParams().getOrderType() +
-                    ", lots: " + order.getParams().getLots());
+            // Add 500ms delay between orders to respect API rate limits
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOGGER.warning("Interrupted during order delay");
+            }
 
-            // Publish event (you would create this class)
-            eventBus.publishAsync(new MainOrderPlacedEvent(orderId, bestPair));
+            // Place put option order
+            LOGGER.info("Placing order for put option: " + putOption.getInstrumentId());
+            String putOrderId = tradingService.placeOrder(
+                    putOption,
+                    lots,
+                    putPrice, // Use the price from the option pair
+                    orderType,
+                    "MAIN-" + orderId);
+
+            if (putOrderId != null) {
+                LOGGER.info("Put option order placed successfully, broker ID: " + putOrderId);
+            } else {
+                LOGGER.warning("Failed to place put option order");
+            }
 
             // Update order status
             orderRepository.updateOrderStatus(orderId, OrderStatus.COMPLETED);
 
+            // Publish event
+            eventBus.publishAsync(new MainOrderPlacedEvent(orderId, bestPair));
+
             // Clean up
             cleanupOrder(orderId);
-
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error executing main order: " + orderId, e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
@@ -390,7 +552,7 @@ public class OrderExecutionCoordinator {
      * @param orderId the order ID
      */
     private void cleanupOrder(String orderId) {
-        // Shutdown option chain service
+        // Remove option chain service
         OptionChainService service = optionChainServices.remove(orderId);
         if (service != null) {
             service.shutdown();
@@ -398,6 +560,11 @@ public class OrderExecutionCoordinator {
 
         // Remove best option pair
         bestOptionPairs.remove(orderId);
+
+        // Clear pre-filtered instruments
+        orderRepository.clearPreFilteredInstruments(orderId);
+
+        LOGGER.info("Cleaned up resources for order: " + orderId);
     }
 
     /**

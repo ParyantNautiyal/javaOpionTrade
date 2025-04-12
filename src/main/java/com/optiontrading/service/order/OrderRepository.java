@@ -4,6 +4,7 @@ import com.optiontrading.events.EventBus;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.OrderStatus;
 import com.optiontrading.service.model.ScheduledOrder;
+import com.optiontrading.service.model.Instrument;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -23,6 +24,9 @@ public class OrderRepository {
 
     // Map of order ID to scheduled order
     private final Map<String, ScheduledOrder> orders = new ConcurrentHashMap<>();
+
+    // Map of order ID to pre-filtered instruments (optimization)
+    private final Map<String, List<Instrument>> preFilteredInstrumentsMap = new ConcurrentHashMap<>();
 
     // Event bus for publishing events
     private final EventBus eventBus;
@@ -146,5 +150,34 @@ public class OrderRepository {
         eventBus.publishAsync(new OrderDeletedEvent(orderId));
 
         return true;
+    }
+
+    /**
+     * Store pre-filtered instruments for an order
+     * 
+     * @param orderId     the order ID
+     * @param instruments the pre-filtered instruments
+     */
+    public void storePreFilteredInstruments(String orderId, List<Instrument> instruments) {
+        preFilteredInstrumentsMap.put(orderId, instruments);
+    }
+
+    /**
+     * Get pre-filtered instruments for an order
+     * 
+     * @param orderId the order ID
+     * @return the pre-filtered instruments or null if not found
+     */
+    public List<Instrument> getPreFilteredInstruments(String orderId) {
+        return preFilteredInstrumentsMap.get(orderId);
+    }
+
+    /**
+     * Remove pre-filtered instruments for an order
+     * 
+     * @param orderId the order ID
+     */
+    public void clearPreFilteredInstruments(String orderId) {
+        preFilteredInstrumentsMap.remove(orderId);
     }
 }

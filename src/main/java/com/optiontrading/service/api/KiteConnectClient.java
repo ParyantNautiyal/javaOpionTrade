@@ -246,12 +246,137 @@ public class KiteConnectClient implements TradingApiClient {
                     try {
                         // Parse the date string - format might vary depending on API version
                         String expiryStr = kiteInstrument.expiry.toString();
-                        if (expiryStr.length() >= 10) {
-                            LocalDate expiryDate = LocalDate.parse(expiryStr.substring(0, 10));
+                        LOGGER.fine("Raw expiry from API: " + expiryStr + " for " + tradingSymbol);
+
+                        // Try different date formats based on observed patterns
+                        LocalDate expiryDate = null;
+
+                        // First try standard Java format (toString of Date/Calendar objects)
+                        if (expiryStr.contains("GMT") || expiryStr.contains("UTC") || expiryStr.contains("IST")) {
+                            // Convert from java.util.Date format: "Tue Apr 30 00:00:00 GMT 2024" or "Thu
+                            // Apr 24 00:00:00 IST 2025"
+                            try {
+                                // Simple parsing - extract date components without relying on Date parsing
+                                String[] parts = expiryStr.split(" ");
+                                if (parts.length >= 6) {
+                                    String month = parts[1]; // Apr
+                                    String day = parts[2]; // 24
+                                    String year = parts[5]; // 2025
+
+                                    // Construct a date string in a known format
+                                    String dateStr = day + "-" + month + "-" + year;
+                                    expiryDate = LocalDate.parse(dateStr,
+                                            java.time.format.DateTimeFormatter.ofPattern("dd-MMM-yyyy",
+                                                    java.util.Locale.ENGLISH));
+                                    LOGGER.fine("Parsed date from Java toString format: " + expiryDate);
+                                } else {
+                                    LOGGER.fine("Date format not as expected: " + expiryStr);
+                                }
+                            } catch (Exception e) {
+                                LOGGER.fine("Failed to parse date from standard format: " + expiryStr + ", error: "
+                                        + e.getMessage());
+
+                                // Try secondary parsing method using SimpleDateFormat for Java toString format
+                                try {
+                                    java.util.Date date = new java.text.SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy",
+                                            java.util.Locale.ENGLISH).parse(expiryStr);
+                                    expiryDate = date.toInstant().atZone(java.time.ZoneId.systemDefault())
+                                            .toLocalDate();
+                                    LOGGER.fine("Parsed date using SimpleDateFormat: " + expiryDate);
+                                } catch (Exception e2) {
+                                    LOGGER.fine("Failed to parse date using SimpleDateFormat: " + e2.getMessage());
+
+                                    // Last resort - extract using regex
+                                    try {
+                                        java.util.regex.Pattern pattern = java.util.regex.Pattern
+                                                .compile("(\\w{3}) (\\w{3}) (\\d{1,2}).*?(\\d{4})");
+                                        java.util.regex.Matcher matcher = pattern.matcher(expiryStr);
+                                        if (matcher.find()) {
+                                            String dayOfWeek = matcher.group(1);
+                                            String month = matcher.group(2);
+                                            String day = matcher.group(3);
+                                            String year = matcher.group(4);
+
+                                            String formattedDate = String.format("%s-%s-%s", day, month, year);
+                                            expiryDate = LocalDate.parse(formattedDate,
+                                                    java.time.format.DateTimeFormatter.ofPattern("d-MMM-yyyy",
+                                                            java.util.Locale.ENGLISH));
+                                            LOGGER.fine("Parsed date using regex extraction: " + expiryDate);
+                                        }
+                                    } catch (Exception e3) {
+                                        LOGGER.fine("Failed to parse date using regex: " + e3.getMessage());
+                                    }
+                                }
+                            }
+                        }
+                        // Try to parse ISO format YYYY-MM-DD
+                        else if (expiryStr.matches("\\d{4}-\\d{2}-\\d{2}.*")) {
+                            expiryDate = LocalDate.parse(expiryStr.substring(0, 10));
+                            LOGGER.fine("Parsed ISO date: " + expiryDate);
+                        }
+                        // Try to parse DD-MM-YYYY format
+                        else if (expiryStr.matches("\\d{2}-\\d{2}-\\d{4}.*")) {
+                            expiryDate = LocalDate.parse(expiryStr.substring(0, 10),
+                                    java.time.format.DateTimeFormatter.ofPattern("dd-MM-yyyy"));
+                            LOGGER.fine("Parsed DD-MM-YYYY date: " + expiryDate);
+                        }
+                        // Try converting unix timestamp (milliseconds)
+                        else if (expiryStr.matches("\\d+")) {
+                            try {
+                                long timestamp = Long.parseLong(expiryStr);
+                                expiryDate = java.time.Instant.ofEpochMilli(timestamp)
+                                        .atZone(java.time.ZoneId.systemDefault())
+                                        .toLocalDate();
+                                LOGGER.fine("Parsed timestamp: " + expiryDate);
+                            } catch (Exception e) {
+                                LOGGER.fine("Failed to parse timestamp: " + e.getMessage());
+                            }
+                        }
+
+                        if (expiryDate != null) {
                             builder.expiryDate(expiryDate);
+                        } else {
+                            // Only log a warning for important indices
+                            boolean isImportantIndex = false;
+                            String[] importantIndices = { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX" };
+
+                            if (kiteInstrument.name != null) {
+                                for (String index : importantIndices) {
+                                    if (kiteInstrument.name.equalsIgnoreCase(index)) {
+                                        isImportantIndex = true;
+                                        break;
+                                    }
+                                }
+                            }
+
+                            if (isImportantIndex) {
+                                LOGGER.warning("Could not parse expiry date: " + expiryStr + " for " + tradingSymbol);
+                            } else {
+                                // Log at fine level for non-critical instruments
+                                LOGGER.fine("Could not parse expiry date: " + expiryStr + " for " + tradingSymbol);
+                            }
                         }
                     } catch (Exception e) {
-                        LOGGER.fine("Could not parse expiry date: " + kiteInstrument.expiry);
+                        // Only log warnings for important indices
+                        boolean isImportantIndex = false;
+                        String[] importantIndices = { "NIFTY", "BANKNIFTY", "FINNIFTY", "SENSEX", "BANKEX" };
+
+                        if (kiteInstrument.name != null) {
+                            for (String index : importantIndices) {
+                                if (kiteInstrument.name.equalsIgnoreCase(index)) {
+                                    isImportantIndex = true;
+                                    break;
+                                }
+                            }
+                        }
+
+                        if (isImportantIndex) {
+                            LOGGER.warning("Error parsing expiry date: " + kiteInstrument.expiry +
+                                    " for " + tradingSymbol + ": " + e.getMessage());
+                        } else {
+                            LOGGER.fine("Error parsing expiry date: " + kiteInstrument.expiry +
+                                    " for " + tradingSymbol + ": " + e.getMessage());
+                        }
                     }
                 }
 
@@ -433,42 +558,67 @@ public class KiteConnectClient implements TradingApiClient {
     }
 
     /**
-     * Get margins data
+     * Get account margin details from Kite API
      * 
-     * @return the margins map
+     * @return Map of margin details
      */
+    @Override
     public Map<String, Object> getMargins() {
-        LOGGER.info("Fetching margins");
+        LOGGER.info("Fetching margin details from Kite API");
 
         try {
-            // Fetch the margin data from Kite Connect API
-            Map<String, Margin> margins = kiteClient.getMargins();
+            checkAuthentication();
 
-            // Convert result to a simple map
-            Map<String, Object> result = new HashMap<>();
+            // Create the request
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create(KITE_API_BASE + "/user/margins"))
+                    .header("X-Kite-Version", "3")
+                    .header("Authorization", "token " + authService.getApiKey() + ":" + authService.getAccessToken())
+                    .GET()
+                    .build();
 
-            // Process each segment
-            for (Map.Entry<String, Margin> entry : margins.entrySet()) {
-                result.put(entry.getKey(), convertToMap(entry.getValue()));
+            // Send the request
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+            // Process the response
+            if (response.statusCode() == 200) {
+                JSONObject json = new JSONObject(response.body());
+
+                if ("success".equals(json.getString("status"))) {
+                    JSONObject data = json.getJSONObject("data");
+
+                    // Convert JSON to Map
+                    Map<String, Object> marginMap = jsonToMap(data);
+                    LOGGER.info("Successfully retrieved margin data from Kite API");
+
+                    return marginMap;
+                } else {
+                    String errorMessage = json.optString("message", "Unknown error");
+                    LOGGER.warning("Kite API error: " + errorMessage);
+                }
+            } else {
+                LOGGER.warning("Kite API returned status code: " + response.statusCode());
+
+                // Handle authentication error
+                if (response.statusCode() == 403 || response.statusCode() == 401) {
+                    LOGGER.severe("Authentication issue detected during margin fetch");
+                    handleAuthenticationError();
+                }
             }
 
-            return result;
-        } catch (KiteException e) {
-            LOGGER.log(Level.SEVERE, "Kite API error fetching margins: " + e.message, e);
+            // Return empty map on failure
+            return new HashMap<>();
 
-            // Handle authentication error
-            if (isAuthenticationError(e)) {
-                LOGGER.severe("Authentication issue detected during margins fetch");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error fetching margins from Kite API", e);
+
+            // Handle authentication error if needed
+            if (e.getMessage() != null && (e.getMessage().contains("token") || e.getMessage().contains("auth"))) {
                 handleAuthenticationError();
             }
 
-            throw new RuntimeException("Failed to fetch margins from Kite API: " + e.message, e);
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "Network error fetching margins", e);
-            throw new RuntimeException("Network error fetching margins from Kite API: " + e.getMessage(), e);
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error fetching margins from Kite API", e);
-            throw new RuntimeException("Failed to fetch margins from Kite API: " + e.getMessage(), e);
+            // Return empty map on failure
+            return new HashMap<>();
         }
     }
 
