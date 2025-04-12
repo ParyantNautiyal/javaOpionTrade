@@ -15,109 +15,97 @@ import java.util.logging.Logger;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * Service for executing trades through the broker API
+ * Service for placing trades and managing orders
+ * Implements singleton pattern
  */
 public class TradingService {
     private static final Logger LOGGER = Logger.getLogger(TradingService.class.getName());
+
+    // Singleton instance
     private static final TradingService INSTANCE = new TradingService();
 
-    private final TradingApiClient tradingApiClient;
+    // API client
+    private final KiteConnectClient kiteClient;
+
+    // Event bus
     private final EventBus eventBus;
 
-    // Store order IDs and their status
-    private final Map<String, String> orderIdMap = new ConcurrentHashMap<>();
-
-    // Order placement retry settings
-    private static final int MAX_RETRIES = 3;
-    private static final long RETRY_DELAY_MS = 1000;
-
+    // Private constructor for singleton
     private TradingService() {
-        this.tradingApiClient = KiteConnectClient.getInstance();
+        this.kiteClient = KiteConnectClient.getInstance();
         this.eventBus = EventBus.getInstance();
+
+        LOGGER.info("Initialized TradingService");
     }
 
+    /**
+     * Get the singleton instance
+     */
     public static TradingService getInstance() {
         return INSTANCE;
     }
 
     /**
-     * Place an order for an instrument
+     * Place an order
      * 
      * @param instrument the instrument to trade
-     * @param quantity   the quantity (in lots)
-     * @param price      the price (null for market orders)
-     * @param orderType  BUY or SELL
-     * @param strategyId the ID of the strategy/order this trade is part of
-     * @return the broker order ID or null if failed
+     * @param quantity   the quantity to trade
+     * @param price      the price to trade at (null for market orders)
+     * @param orderType  the order type (BUY/SELL)
+     * @param tag        an optional tag for the order (for reference)
+     * @return the broker order ID, or null if the order failed
      */
-    public String placeOrder(Instrument instrument, int quantity, BigDecimal price,
-            OrderType orderType, String strategyId) {
-        LOGGER.info(String.format("Placing %s order for %s, quantity: %d, price: %s",
-                orderType, instrument.getTradingSymbol(), quantity, price));
+    public String placeOrder(Instrument instrument, int quantity, BigDecimal price, OrderType orderType, String tag) {
+        if (instrument == null) {
+            LOGGER.warning("Cannot place order: instrument is null");
+            return null;
+        }
+
+        if (quantity <= 0) {
+            LOGGER.warning("Cannot place order: quantity must be positive");
+            return null;
+        }
+
+        if (orderType == null) {
+            LOGGER.warning("Cannot place order: order type is null");
+            return null;
+        }
+
+        if (!kiteClient.isAuthenticated()) {
+            LOGGER.severe("Cannot place order: not authenticated with broker");
+            return null;
+        }
 
         try {
-            // Calculate actual quantity based on lot size
-            int actualQuantity = quantity;
-            if (instrument.getLotSize() > 0) {
-                actualQuantity = quantity * instrument.getLotSize();
-            }
+            LOGGER.info("Placing " + orderType + " order for " + quantity + " of " +
+                    instrument.getTradingSymbol() + " at price " +
+                    (price != null ? price.toString() : "MARKET"));
 
             boolean isBuy = (orderType == OrderType.BUY);
-            String brokerId = null;
-            int retries = 0;
+            String orderId = kiteClient.placeOrder(
+                    instrument.getInstrumentId(),
+                    quantity,
+                    price,
+                    isBuy);
 
-            while (brokerId == null && retries < MAX_RETRIES) {
-                try {
-                    brokerId = tradingApiClient.placeOrder(
-                            instrument.getInstrumentId(),
-                            actualQuantity,
-                            price,
-                            isBuy);
+            if (orderId != null) {
+                LOGGER.info("Order placed successfully, broker ID: " + orderId);
 
-                    if (brokerId != null) {
-                        // Store the mapping between our strategy ID and broker order ID
-                        orderIdMap.put(strategyId + ":" + instrument.getInstrumentId(), brokerId);
-
-                        LOGGER.info(String.format("Order placed successfully. Broker ID: %s, Strategy ID: %s",
-                                brokerId, strategyId));
-
-                        // Publish order placed event
-                        eventBus.publishAsync(
-                                new OrderPlacedEvent(strategyId, instrument, brokerId, orderType, quantity, price));
-
-                        return brokerId;
-                    }
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Error placing order, retrying: " + e.getMessage(), e);
-                    retries++;
-
-                    if (retries < MAX_RETRIES) {
-                        try {
-                            Thread.sleep(RETRY_DELAY_MS);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            LOGGER.warning("Interrupted during order retry delay");
-                        }
-                    }
-                }
+                // Publish event about the order
+                eventBus.publishAsync(new OrderPlacedEvent(
+                        orderId,
+                        instrument,
+                        quantity,
+                        price,
+                        orderType,
+                        tag));
+            } else {
+                LOGGER.warning("Failed to place order, broker returned null ID");
             }
 
-            if (brokerId == null) {
-                LOGGER.severe(String.format("Failed to place order after %d attempts: %s",
-                        MAX_RETRIES, instrument.getTradingSymbol()));
-
-                // Publish failure event
-                eventBus.publishAsync(new OrderFailedEvent(strategyId, instrument, orderType, "Max retries exceeded"));
-            }
-
-            return brokerId;
-
+            return orderId;
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error placing order", e);
-
-            // Publish failure event
-            eventBus.publishAsync(new OrderFailedEvent(strategyId, instrument, orderType, e.getMessage()));
-
             return null;
         }
     }
@@ -158,7 +146,7 @@ public class TradingService {
      */
     public BigDecimal getAvailableMargin() {
         try {
-            Map<String, Object> margins = tradingApiClient.getMargins();
+            Map<String, Object> margins = kiteClient.getMargins();
 
             if (margins != null && margins.containsKey("available")) {
                 Object available = margins.get("available");
@@ -185,7 +173,7 @@ public class TradingService {
      */
     public BigDecimal getUtilizedMargin() {
         try {
-            Map<String, Object> margins = tradingApiClient.getMargins();
+            Map<String, Object> margins = kiteClient.getMargins();
 
             if (margins != null && margins.containsKey("utilised")) {
                 Object utilized = margins.get("utilised");

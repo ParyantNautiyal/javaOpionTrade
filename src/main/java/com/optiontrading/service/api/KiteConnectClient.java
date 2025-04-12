@@ -278,8 +278,36 @@ public class KiteConnectClient implements TradingApiClient {
 
                                 // Try secondary parsing method using SimpleDateFormat for Java toString format
                                 try {
-                                    java.util.Date date = new java.text.SimpleDateFormat("EEE MMM dd HH:mm:ss zzz yyyy",
-                                            java.util.Locale.ENGLISH).parse(expiryStr);
+                                    // Create a more comprehensive pattern that can handle both GMT and IST
+                                    // timezones
+                                    String[] patterns = {
+                                            "EEE MMM dd HH:mm:ss zzz yyyy", // Full timezone name (GMT)
+                                            "EEE MMM dd HH:mm:ss z yyyy", // Short timezone (IST)
+                                            "EEE MMM dd HH:mm:ss 'IST' yyyy" // Literal IST with quotes
+                                    };
+
+                                    java.util.Date date = null;
+                                    java.text.ParseException lastException = null;
+
+                                    // Try each pattern
+                                    for (String pattern : patterns) {
+                                        try {
+                                            date = new java.text.SimpleDateFormat(pattern, java.util.Locale.ENGLISH)
+                                                    .parse(expiryStr);
+                                            if (date != null) {
+                                                LOGGER.fine("Parsed date using pattern: " + pattern);
+                                                break;
+                                            }
+                                        } catch (java.text.ParseException pe) {
+                                            lastException = pe;
+                                            // Continue to next pattern
+                                        }
+                                    }
+
+                                    if (date == null && lastException != null) {
+                                        throw lastException; // Re-throw the last exception if all patterns failed
+                                    }
+
                                     expiryDate = date.toInstant().atZone(java.time.ZoneId.systemDefault())
                                             .toLocalDate();
                                     LOGGER.fine("Parsed date using SimpleDateFormat: " + expiryDate);

@@ -7,48 +7,48 @@ import com.optiontrading.service.model.OrderType;
 import java.math.BigDecimal;
 
 /**
- * Event published when an order is successfully placed with the broker
+ * Event published when an order is placed
  */
 public class OrderPlacedEvent extends Event {
-    private final String strategyId;
+    private final String orderId;
     private final Instrument instrument;
-    private final String brokerId;
-    private final OrderType orderType;
     private final int quantity;
     private final BigDecimal price;
+    private final OrderType orderType;
+    private final String tag;
 
     /**
      * Create a new order placed event
-     *
-     * @param strategyId the strategy ID
+     * 
+     * @param orderId    the broker order ID
      * @param instrument the instrument that was traded
-     * @param brokerId   the broker's order ID
+     * @param quantity   the quantity that was traded
+     * @param price      the price that was used (null for market orders)
      * @param orderType  the order type (BUY/SELL)
-     * @param quantity   the quantity in lots
-     * @param price      the order price
+     * @param tag        an optional tag for the order
      */
-    public OrderPlacedEvent(String strategyId, Instrument instrument, String brokerId,
-            OrderType orderType, int quantity, BigDecimal price) {
-        this.strategyId = strategyId;
+    public OrderPlacedEvent(String orderId, Instrument instrument, int quantity,
+            BigDecimal price, OrderType orderType, String tag) {
+        this.orderId = orderId;
         this.instrument = instrument;
-        this.brokerId = brokerId;
-        this.orderType = orderType;
         this.quantity = quantity;
         this.price = price;
+        this.orderType = orderType;
+        this.tag = tag;
     }
 
     /**
-     * Get the strategy ID
-     *
-     * @return the strategy ID
+     * Get the order ID
+     * 
+     * @return the order ID
      */
-    public String getStrategyId() {
-        return strategyId;
+    public String getOrderId() {
+        return orderId;
     }
 
     /**
      * Get the instrument
-     *
+     * 
      * @return the instrument
      */
     public Instrument getInstrument() {
@@ -56,26 +56,8 @@ public class OrderPlacedEvent extends Event {
     }
 
     /**
-     * Get the broker's order ID
-     *
-     * @return the broker's order ID
-     */
-    public String getBrokerId() {
-        return brokerId;
-    }
-
-    /**
-     * Get the order type
-     *
-     * @return the order type
-     */
-    public OrderType getOrderType() {
-        return orderType;
-    }
-
-    /**
-     * Get the quantity in lots
-     *
+     * Get the quantity
+     * 
      * @return the quantity
      */
     public int getQuantity() {
@@ -83,11 +65,29 @@ public class OrderPlacedEvent extends Event {
     }
 
     /**
-     * Get the order price
-     *
+     * Get the price
+     * 
      * @return the price
      */
     public BigDecimal getPrice() {
         return price;
+    }
+
+    /**
+     * Get the order type
+     * 
+     * @return the order type
+     */
+    public OrderType getOrderType() {
+        return orderType;
+    }
+
+    /**
+     * Get the tag
+     * 
+     * @return the tag
+     */
+    public String getTag() {
+        return tag;
     }
 }

@@ -1,6 +1,10 @@
 package com.optiontrading.resources;
 
+import com.optiontrading.service.position.PositionRepository;
+import com.optiontrading.service.position.PositionWatchlistService;
+
 import java.util.logging.Logger;
+import java.util.logging.Level;
 
 /**
  * Manages shared application resources like thread pools
@@ -18,11 +22,19 @@ public class ResourceManager {
     // Cache manager
     private final CacheManager cacheManager;
 
+    // Position watchlist service
+    private final PositionWatchlistService positionWatchlistService;
+
+    // Position repository
+    private final PositionRepository positionRepository;
+
     // Private constructor for singleton
     private ResourceManager() {
         this.threadManager = ThreadManager.getInstance();
         this.timerManager = TimerManager.getInstance();
         this.cacheManager = CacheManager.getInstance();
+        this.positionWatchlistService = PositionWatchlistService.getInstance();
+        this.positionRepository = PositionRepository.getInstance();
 
         LOGGER.info("ResourceManager initialized");
     }
@@ -56,21 +68,45 @@ public class ResourceManager {
     }
 
     /**
+     * Get the position watchlist service
+     */
+    public PositionWatchlistService getPositionWatchlistService() {
+        return positionWatchlistService;
+    }
+
+    /**
+     * Get the position repository
+     */
+    public PositionRepository getPositionRepository() {
+        return positionRepository;
+    }
+
+    /**
      * Shutdown all managed resources
      */
     public void shutdown() {
-        LOGGER.info("Shutting down ResourceManager");
+        LOGGER.info("Shutting down resources");
 
-        // Shutdown thread pools
-        threadManager.shutdownAllExecutors();
+        try {
+            // Shut down position repository
+            PositionRepository.getInstance().shutdown();
 
-        // Cancel all timers
-        timerManager.shutdownAllTimers();
+            // Shutdown thread pools
+            threadManager.shutdownAllExecutors();
 
-        // Clear caches
-        cacheManager.shutdown();
+            // Cancel all timers
+            timerManager.shutdownAllTimers();
 
-        LOGGER.info("ResourceManager shutdown complete");
+            // Clear caches
+            cacheManager.shutdown();
+
+            // Shutdown position watchlist
+            positionWatchlistService.shutdown();
+
+            LOGGER.info("ResourceManager shutdown complete");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error during resource shutdown", e);
+        }
     }
 
     /**
@@ -90,6 +126,10 @@ public class ResourceManager {
 
         metrics.append("--- CACHE METRICS ---\n");
         metrics.append("Active caches: ").append(cacheManager.getCacheCount()).append("\n");
+
+        metrics.append("--- POSITION WATCHLIST METRICS ---\n");
+        metrics.append("Active positions: ").append(positionWatchlistService.getActivePositions().size()).append("\n");
+        metrics.append("Total positions: ").append(positionWatchlistService.getAllPositions().size()).append("\n");
 
         return metrics.toString();
     }
