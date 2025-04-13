@@ -142,4 +142,20 @@ public class InstrumentLogger {
             warning("DIRECTORY CREATION FAILED: " + path);
         }
     }
+
+    /**
+     * Shutdown the logger and close file handlers
+     */
+    public static void shutdown() {
+        if (initialized) {
+            LOGGER.info("Shutting down instrument logger");
+            for (java.util.logging.Handler handler : LOGGER.getHandlers()) {
+                if (handler instanceof FileHandler) {
+                    handler.close();
+                }
+                LOGGER.removeHandler(handler);
+            }
+            initialized = false;
+        }
+    }
 }

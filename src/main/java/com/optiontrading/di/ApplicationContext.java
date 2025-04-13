@@ -16,6 +16,7 @@ import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.order.OrderExecutionCoordinator;
 
 import java.util.Scanner;
+import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
@@ -203,5 +204,35 @@ public class ApplicationContext {
      */
     public void shutdown() {
         LOGGER.info("Shutting down ApplicationContext");
+
+        // Get all services that need proper shutdown
+        try {
+            // Shut down MarketDataService if it exists
+            try {
+                MarketDataService marketDataService = getService(MarketDataService.class);
+                if (marketDataService != null) {
+                    marketDataService.shutdown();
+                    LOGGER.info("MarketDataService shutdown complete");
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error shutting down MarketDataService", e);
+            }
+
+            // Shut down OrderExecutionCoordinator if it exists
+            try {
+                OrderExecutionCoordinator orderCoordinator = getService(OrderExecutionCoordinator.class);
+                if (orderCoordinator != null) {
+                    orderCoordinator.shutdown();
+                    LOGGER.info("OrderExecutionCoordinator shutdown complete");
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.WARNING, "Error shutting down OrderExecutionCoordinator", e);
+            }
+
+            // Other services are shut down through ResourceManager
+
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error during ApplicationContext shutdown", e);
+        }
     }
 }

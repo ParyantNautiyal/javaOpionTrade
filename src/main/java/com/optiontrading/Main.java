@@ -68,6 +68,9 @@ public class Main {
     }
 
     public static void main(String[] args) {
+        // Clean up any leftover lock files from previous runs
+        com.optiontrading.utils.LockFileCleanup.cleanupLockFiles();
+
         // Configure logging to file to avoid console interference
         configureLogging();
 
@@ -87,6 +90,87 @@ public class Main {
             System.err.println("Fatal error: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Configure logging for the application
+     */
+    private static void configureLogging() {
+        try {
+            // Create logs directory if it doesn't exist
+            File logDir = new File("logs");
+            if (!logDir.exists()) {
+                logDir.mkdirs();
+            }
+
+            // Set up file handler
+            FileHandler fileHandler = new FileHandler("logs/app.log", 1048576, 10, true);
+            fileHandler.setFormatter(new SimpleFormatter());
+
+            // Apply our filter to show only OptionChainService logs
+            fileHandler.setFilter(new MainLogFilter());
+
+            // Get the root logger and set the level
+            Logger rootLogger = Logger.getLogger("");
+            rootLogger.setLevel(Level.INFO);
+
+            // Remove any existing handlers to avoid duplicates
+            Handler[] handlers = rootLogger.getHandlers();
+            for (Handler handler : handlers) {
+                rootLogger.removeHandler(handler);
+            }
+
+            // Add our filtered handler
+            rootLogger.addHandler(fileHandler);
+
+            // Also keep console output for startup information
+            ConsoleHandler consoleHandler = new ConsoleHandler();
+            consoleHandler.setLevel(Level.INFO);
+            consoleHandler.setFilter(new MainLogFilter());
+            rootLogger.addHandler(consoleHandler);
+
+            Logger.getLogger(Main.class.getName())
+                    .info("Logging configured to show only OptionChainService logs in logs/app.log and console");
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    /**
+     * Shutdown all loggers and close file handlers to prevent .lck files
+     */
+    private static void shutdownLogging() {
+        LOGGER.info("Closing all logger file handlers");
+
+        // Close all handlers on the root logger
+        Logger rootLogger = Logger.getLogger("");
+        for (Handler handler : rootLogger.getHandlers()) {
+            handler.close();
+            rootLogger.removeHandler(handler);
+        }
+
+        // Also close specific loggers that maintain their own handlers
+        try {
+            com.optiontrading.utils.TradeLogManager.shutdown();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error shutting down TradeLogManager", e);
+        }
+
+        try {
+            com.optiontrading.logging.InstrumentLogger.shutdown();
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error shutting down InstrumentLogger", e);
+        }
+
+        try {
+            if (com.optiontrading.logging.LoggingConfigurator.class != null) {
+                com.optiontrading.logging.LoggingConfigurator.shutdown();
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.WARNING, "Error shutting down LoggingConfigurator", e);
+        }
+
+        LOGGER.info("All logger file handlers closed");
     }
 
     /**
@@ -156,6 +240,9 @@ public class Main {
             resourceManager.shutdown();
             resourceMonitor.stopMonitoring();
 
+            // Shut down all loggers
+            shutdownLogging();
+
             // Ensure application exits completely
             LOGGER.info("Application shutdown complete. Exiting.");
             System.exit(0);
@@ -163,50 +250,6 @@ public class Main {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error in application startup", e);
             System.err.println("Fatal error: " + e.getMessage());
-            e.printStackTrace();
-        }
-    }
-
-    /**
-     * Configure logging for the application
-     */
-    private static void configureLogging() {
-        try {
-            // Create logs directory if it doesn't exist
-            File logDir = new File("logs");
-            if (!logDir.exists()) {
-                logDir.mkdirs();
-            }
-
-            // Set up file handler
-            FileHandler fileHandler = new FileHandler("logs/app.log", 1048576, 10, true);
-            fileHandler.setFormatter(new SimpleFormatter());
-
-            // Apply our filter to show only OptionChainService logs
-            fileHandler.setFilter(new MainLogFilter());
-
-            // Get the root logger and set the level
-            Logger rootLogger = Logger.getLogger("");
-            rootLogger.setLevel(Level.INFO);
-
-            // Remove any existing handlers to avoid duplicates
-            Handler[] handlers = rootLogger.getHandlers();
-            for (Handler handler : handlers) {
-                rootLogger.removeHandler(handler);
-            }
-
-            // Add our filtered handler
-            rootLogger.addHandler(fileHandler);
-
-            // Also keep console output for startup information
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setLevel(Level.INFO);
-            consoleHandler.setFilter(new MainLogFilter());
-            rootLogger.addHandler(consoleHandler);
-
-            Logger.getLogger(Main.class.getName())
-                    .info("Logging configured to show only OptionChainService logs in logs/app.log and console");
-        } catch (IOException e) {
             e.printStackTrace();
         }
     }

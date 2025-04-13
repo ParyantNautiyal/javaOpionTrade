@@ -206,10 +206,13 @@ public class PositionWatchlistService implements MarketDataSubscriber {
     /**
      * Create and add a new price trigger position
      * 
-     * @param instrument   the instrument
-     * @param orderType    BUY or SELL
-     * @param quantity     quantity of the position
-     * @param entryPrice   entry price
+     * @param instrument   the instrument to trade
+     * @param orderType    the order type (BUY/SELL)
+     *                     For manual positions, this is the direction that will be
+     *                     executed
+     *                     when the price triggers
+     * @param quantity     the quantity to trade
+     * @param entryPrice   the current market price
      * @param triggerPrice target price to trigger the position
      * @return the created position
      */
@@ -236,16 +239,20 @@ public class PositionWatchlistService implements MarketDataSubscriber {
     }
 
     /**
-     * Create and add a new stop-loss position
+     * Create and add a new position with stop loss
      * 
-     * @param instrument         the instrument
-     * @param orderType          BUY or SELL
-     * @param quantity           quantity of the position
-     * @param entryPrice         entry price
-     * @param stopLossPercentage stop loss percentage
-     * @param moveToBreakeven    whether to move stop to breakeven
-     * @param trailingStopLoss   whether to use trailing stop loss
-     * @param trailingDistance   trailing distance
+     * @param instrument         the instrument to trade
+     * @param orderType          the order type (BUY/SELL)
+     *                           For automated positions, this will execute the
+     *                           opposite order
+     *                           when the stop loss is triggered
+     * @param quantity           the quantity to trade
+     * @param entryPrice         the current market price
+     * @param stopLossPercentage the stop loss percentage
+     * @param moveToBreakeven    whether to move stop to breakeven after sufficient
+     *                           profit
+     * @param trailingStopLoss   whether to use a trailing stop
+     * @param trailingDistance   the distance for trailing stop (percentage)
      * @return the created position
      */
     public WatchedPosition addStopLossPosition(
@@ -338,6 +345,13 @@ public class PositionWatchlistService implements MarketDataSubscriber {
      * Check if a price trigger condition is met
      */
     private void checkTriggerConditions(WatchedPosition position, BigDecimal price) {
+        // Special handling for manual trigger positions
+        if (position.isPriceTrigger() && position.getSource() == PositionSource.MANUAL) {
+            checkManualTriggerConditions(position, price);
+            return;
+        }
+
+        // Original logic for non-manual triggers
         if (!position.isPriceTrigger() || !position.isActive()) {
             return;
         }
@@ -366,8 +380,98 @@ public class PositionWatchlistService implements MarketDataSubscriber {
 
             LOGGER.info("Position triggered: " + position);
 
-            // Execute order when triggered
+            // Execute order when triggered (opposite direction for automatic positions)
             executeTriggeredOrder(position, price);
+        }
+    }
+
+    /**
+     * Check if a manual price trigger condition is met.
+     * Manual triggers execute orders in the same direction as specified by the
+     * user.
+     */
+    private void checkManualTriggerConditions(WatchedPosition position, BigDecimal price) {
+        if (!position.isActive()) {
+            return;
+        }
+
+        BigDecimal triggerPrice = position.getTriggerPrice();
+        if (triggerPrice == null) {
+            return;
+        }
+
+        boolean triggered = false;
+        OrderType orderType = position.getOrderType();
+
+        if (orderType == OrderType.BUY) {
+            // For manual BUY triggers, activate when price is AT or ABOVE trigger price
+            triggered = price.compareTo(triggerPrice) >= 0;
+        } else {
+            // For manual SELL triggers, activate when price is AT or BELOW trigger price
+            triggered = price.compareTo(triggerPrice) <= 0;
+        }
+
+        if (triggered) {
+            position.updateStatus(PositionStatus.TRIGGERED,
+                    "Manual trigger: Price " + price + " crossed trigger price " + triggerPrice);
+
+            // Save status change to repository
+            positionRepository.savePosition(position);
+
+            LOGGER.info("Manual position triggered: " + position);
+
+            // Execute order in the SAME direction as specified
+            executeManualTriggeredOrder(position, price);
+        }
+    }
+
+    /**
+     * Execute an order for a manually triggered position in the same direction as
+     * specified
+     */
+    private void executeManualTriggeredOrder(WatchedPosition position, BigDecimal currentPrice) {
+        Instrument instrument = position.getInstrument();
+
+        if (instrument == null) {
+            LOGGER.warning("Cannot execute manual order for position " + position.getId() + ": instrument is null");
+            return;
+        }
+
+        try {
+            // For manual triggers, use the SAME order type as specified (not opposite)
+            OrderType executionOrderType = position.getOrderType();
+
+            LOGGER.info("Executing MANUAL " + executionOrderType + " order for triggered position " +
+                    position.getId() + " at price " + currentPrice);
+
+            // Place the order through trading service
+            String brokerId = tradingService.placeOrder(
+                    instrument,
+                    position.getQuantity(),
+                    currentPrice, // Use current market price
+                    executionOrderType,
+                    "MANUAL-TRIGGER-" + position.getId());
+
+            if (brokerId != null) {
+                position.setBrokerId(brokerId);
+
+                // Save broker ID to repository
+                positionRepository.savePosition(position);
+
+                LOGGER.info("Manual order placed successfully for triggered position " +
+                        position.getId() + ", broker order ID: " + brokerId);
+
+                // Publish event about the order execution
+                eventBus.publishAsync(new PositionOrderExecutedEvent(position, executionOrderType, currentPrice));
+            } else {
+                LOGGER.warning("Failed to place manual order for triggered position " + position.getId());
+                position.updateStatus(PositionStatus.ERROR, "Failed to place manual trigger order");
+                positionRepository.savePosition(position);
+            }
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error executing manual order for triggered position " + position.getId(), e);
+            position.updateStatus(PositionStatus.ERROR, "Error executing manual trigger order: " + e.getMessage());
+            positionRepository.savePosition(position);
         }
     }
 
@@ -403,7 +507,7 @@ public class PositionWatchlistService implements MarketDataSubscriber {
 
             LOGGER.info("Position stopped out: " + position);
 
-            // Execute stop loss order
+            // Execute stop loss order (opposite direction for automatic positions)
             executeStopLossOrder(position, price);
         }
     }

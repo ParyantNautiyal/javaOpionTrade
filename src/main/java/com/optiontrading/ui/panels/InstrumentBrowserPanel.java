@@ -38,15 +38,22 @@ import javafx.scene.control.TableCell;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Panel for browsing and searching for instruments
  */
 public class InstrumentBrowserPanel extends BorderPane {
+
+    private static final Logger LOGGER = LoggerFactory.getLogger(InstrumentBrowserPanel.class);
 
     private final KiteConnectClient kiteClient;
     private final EventBus eventBus;
@@ -253,24 +260,17 @@ public class InstrumentBrowserPanel extends BorderPane {
     private Callback<TableColumn<InstrumentEntry, Void>, TableCell<InstrumentEntry, Void>> createActionButtonCellFactory() {
         return param -> new TableCell<InstrumentEntry, Void>() {
             private final Button triggerButton = new Button("Price Trigger");
-            private final Button stopLossButton = new Button("Stop Loss");
-            private final HBox pane = new HBox(5, triggerButton, stopLossButton);
+            private final HBox pane = new HBox(5, triggerButton);
 
             {
                 // Configure button size and layout
                 triggerButton.setMinWidth(90);
-                stopLossButton.setMinWidth(90);
                 pane.setAlignment(Pos.CENTER);
 
-                // Set action handlers
+                // Set action handler
                 triggerButton.setOnAction(event -> {
                     InstrumentEntry instrument = getTableView().getItems().get(getIndex());
                     showPriceTriggerDialog(instrument);
-                });
-
-                stopLossButton.setOnAction(event -> {
-                    InstrumentEntry instrument = getTableView().getItems().get(getIndex());
-                    showStopLossDialog(instrument);
                 });
             }
 
@@ -292,193 +292,87 @@ public class InstrumentBrowserPanel extends BorderPane {
         dialog.setTitle("Add Price Trigger Position");
         dialog.setHeaderText("Create Price Trigger for " + instrumentEntry.getTradingSymbol());
 
-        // Get current LTP (in a real app, this would come from market data)
-        BigDecimal ltp = getLastTradedPrice(instrumentEntry);
+        try {
+            // Get current LTP from market data
+            BigDecimal ltp = getLastTradedPrice(instrumentEntry);
 
-        // Create the dialog content
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
-        grid.setPadding(new Insets(20, 150, 10, 10));
+            // Create the dialog content
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 150, 10, 10));
 
-        // Instrument information
-        grid.add(new Label("Instrument:"), 0, 0);
-        grid.add(new Label(instrumentEntry.getTradingSymbol()), 1, 0);
+            // Instrument information
+            grid.add(new Label("Instrument:"), 0, 0);
+            grid.add(new Label(instrumentEntry.getTradingSymbol()), 1, 0);
 
-        grid.add(new Label("Current LTP:"), 0, 1);
-        grid.add(new Label(ltp.toString()), 1, 1);
+            grid.add(new Label("Current LTP:"), 0, 1);
+            grid.add(new Label(ltp.toString()), 1, 1);
 
-        grid.add(new Label("Lot Size:"), 0, 2);
-        grid.add(new Label(instrumentEntry.getLotSize().toString()), 1, 2);
+            grid.add(new Label("Lot Size:"), 0, 2);
+            grid.add(new Label(instrumentEntry.getLotSize().toString()), 1, 2);
 
-        // Input fields
-        grid.add(new Label("Trigger Price:"), 0, 3);
-        TextField triggerPriceField = new TextField();
-        triggerPriceField.setText(ltp.toString()); // Default to current price
-        grid.add(triggerPriceField, 1, 3);
+            // Input fields
+            grid.add(new Label("Trigger Price:"), 0, 3);
+            TextField triggerPriceField = new TextField();
+            triggerPriceField.setText(ltp.toString()); // Default to current price
+            grid.add(triggerPriceField, 1, 3);
 
-        grid.add(new Label("Quantity (Lots):"), 0, 4);
-        TextField quantityField = new TextField("1");
-        grid.add(quantityField, 1, 4);
+            grid.add(new Label("Quantity (Lots):"), 0, 4);
+            TextField quantityField = new TextField("1");
+            grid.add(quantityField, 1, 4);
 
-        grid.add(new Label("Buy/Sell:"), 0, 5);
-        ComboBox<String> directionCombo = new ComboBox<>();
-        directionCombo.getItems().addAll("BUY", "SELL");
-        directionCombo.setValue("BUY");
-        grid.add(directionCombo, 1, 5);
+            grid.add(new Label("Buy/Sell:"), 0, 5);
+            ComboBox<String> directionCombo = new ComboBox<>();
+            directionCombo.getItems().addAll("BUY", "SELL");
+            directionCombo.setValue("BUY");
+            grid.add(directionCombo, 1, 5);
 
-        dialog.getDialogPane().setContent(grid);
+            dialog.getDialogPane().setContent(grid);
 
-        // Add buttons
-        ButtonType createButtonType = new ButtonType("Create", ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(createButtonType, ButtonType.CANCEL);
+            // Add buttons
+            ButtonType createButtonType = new ButtonType("Create", ButtonData.OK_DONE);
+            dialog.getDialogPane().getButtonTypes().addAll(createButtonType, ButtonType.CANCEL);
 
-        // Show the dialog and process the result
-        Optional<ButtonType> result = dialog.showAndWait();
-        if (result.isPresent() && result.get() == createButtonType) {
-            try {
-                BigDecimal triggerPrice = new BigDecimal(triggerPriceField.getText());
-                int lots = Integer.parseInt(quantityField.getText());
-                int quantity = lots * instrumentEntry.getLotSize().intValue();
-                String directionStr = directionCombo.getValue();
-                OrderType orderType = OrderType.valueOf(directionStr);
+            // Show the dialog and process the result
+            Optional<ButtonType> result = dialog.showAndWait();
+            if (result.isPresent() && result.get() == createButtonType) {
+                try {
+                    BigDecimal triggerPrice = new BigDecimal(triggerPriceField.getText());
+                    int lots = Integer.parseInt(quantityField.getText());
+                    int quantity = lots * instrumentEntry.getLotSize().intValue();
+                    String directionStr = directionCombo.getValue();
+                    OrderType orderType = OrderType.valueOf(directionStr);
 
-                // Get the actual Instrument object from the service
-                Instrument instrument = getInstrumentFromEntry(instrumentEntry);
+                    // Get the actual Instrument object from the service
+                    Instrument instrument = getInstrumentFromEntry(instrumentEntry);
 
-                if (instrument != null) {
-                    // Create the actual position in the watchlist service
-                    positionWatchlistService.addPriceTriggerPosition(
-                            instrument,
-                            orderType,
-                            quantity,
-                            ltp, // Use current price as entry price
-                            triggerPrice);
+                    if (instrument != null) {
+                        // Create the actual position in the watchlist service
+                        positionWatchlistService.addPriceTriggerPosition(
+                                instrument,
+                                orderType,
+                                quantity,
+                                ltp, // Use current price as entry price
+                                triggerPrice);
 
-                    // Show success message
-                    statusLabel.setText("Created price trigger position for " + instrumentEntry.getTradingSymbol() +
-                            " at " + triggerPrice + " for " + quantity + " shares (" + directionStr + ")");
-                } else {
-                    showError("Instrument Not Found", "Could not find the instrument in the service.");
+                        // Show success message
+                        statusLabel.setText("Created price trigger position for " + instrumentEntry.getTradingSymbol() +
+                                " at " + triggerPrice + " for " + quantity + " shares (" + directionStr + ")");
+                    } else {
+                        showError("Instrument Not Found", "Could not find the instrument in the service.");
+                    }
+
+                } catch (NumberFormatException e) {
+                    showError("Invalid Input", "Please enter valid numeric values for price and quantity.");
+                } catch (Exception e) {
+                    showError("Error Creating Position", "An error occurred: " + e.getMessage());
+                    e.printStackTrace();
                 }
-
-            } catch (NumberFormatException e) {
-                showError("Invalid Input", "Please enter valid numeric values for price and quantity.");
-            } catch (Exception e) {
-                showError("Error Creating Position", "An error occurred: " + e.getMessage());
-                e.printStackTrace();
             }
-        }
-    }
-
-    private void showStopLossDialog(InstrumentEntry instrumentEntry) {
-        // Create a custom dialog
-        Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Add Stop Loss Position");
-        dialog.setHeaderText("Create Stop Loss for " + instrumentEntry.getTradingSymbol());
-
-        // Get current LTP (in a real app, this would come from market data)
-        BigDecimal ltp = getLastTradedPrice(instrumentEntry);
-
-        // Create the dialog content
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
-        grid.setPadding(new Insets(20, 150, 10, 10));
-
-        // Instrument information
-        grid.add(new Label("Instrument:"), 0, 0);
-        grid.add(new Label(instrumentEntry.getTradingSymbol()), 1, 0);
-
-        grid.add(new Label("Current LTP:"), 0, 1);
-        grid.add(new Label(ltp.toString()), 1, 1);
-
-        grid.add(new Label("Lot Size:"), 0, 2);
-        grid.add(new Label(instrumentEntry.getLotSize().toString()), 1, 2);
-
-        // Input fields
-        grid.add(new Label("Stop Loss Price:"), 0, 3);
-        TextField stopLossPriceField = new TextField();
-        grid.add(stopLossPriceField, 1, 3);
-
-        grid.add(new Label("Stop Loss %:"), 0, 4);
-        TextField stopLossPercentField = new TextField("1.0"); // Default 1%
-        grid.add(stopLossPercentField, 1, 4);
-
-        grid.add(new Label("Quantity (Lots):"), 0, 5);
-        TextField quantityField = new TextField("1");
-        grid.add(quantityField, 1, 5);
-
-        grid.add(new Label("Buy/Sell:"), 0, 6);
-        ComboBox<String> directionCombo = new ComboBox<>();
-        directionCombo.getItems().addAll("BUY", "SELL");
-        directionCombo.setValue("SELL");
-        grid.add(directionCombo, 1, 6);
-
-        grid.add(new Label("Move to Breakeven:"), 0, 7);
-        ComboBox<String> moveToBreakevenCombo = new ComboBox<>();
-        moveToBreakevenCombo.getItems().addAll("Yes", "No");
-        moveToBreakevenCombo.setValue("No");
-        grid.add(moveToBreakevenCombo, 1, 7);
-
-        grid.add(new Label("Trailing Stop:"), 0, 8);
-        ComboBox<String> trailingStopCombo = new ComboBox<>();
-        trailingStopCombo.getItems().addAll("Yes", "No");
-        trailingStopCombo.setValue("No");
-        grid.add(trailingStopCombo, 1, 8);
-
-        grid.add(new Label("Trailing Distance:"), 0, 9);
-        TextField trailingDistanceField = new TextField("0.5"); // Default 0.5%
-        grid.add(trailingDistanceField, 1, 9);
-
-        dialog.getDialogPane().setContent(grid);
-
-        // Add buttons
-        ButtonType createButtonType = new ButtonType("Create", ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(createButtonType, ButtonType.CANCEL);
-
-        // Show the dialog and process the result
-        Optional<ButtonType> result = dialog.showAndWait();
-        if (result.isPresent() && result.get() == createButtonType) {
-            try {
-                int lots = Integer.parseInt(quantityField.getText());
-                int quantity = lots * instrumentEntry.getLotSize().intValue();
-                String directionStr = directionCombo.getValue();
-                OrderType orderType = OrderType.valueOf(directionStr);
-                BigDecimal stopLossPercent = new BigDecimal(stopLossPercentField.getText());
-                boolean moveToBreakeven = "Yes".equals(moveToBreakevenCombo.getValue());
-                boolean trailingStop = "Yes".equals(trailingStopCombo.getValue());
-                BigDecimal trailingDistance = new BigDecimal(trailingDistanceField.getText());
-
-                // Get the actual Instrument object from the service
-                Instrument instrument = getInstrumentFromEntry(instrumentEntry);
-
-                if (instrument != null) {
-                    // Create the actual position in the watchlist service
-                    positionWatchlistService.addStopLossPosition(
-                            instrument,
-                            orderType,
-                            quantity,
-                            ltp, // Use current price as entry price
-                            stopLossPercent,
-                            moveToBreakeven,
-                            trailingStop,
-                            trailingDistance);
-
-                    // Show success message
-                    statusLabel.setText("Created stop loss position for " + instrumentEntry.getTradingSymbol() +
-                            " with " + stopLossPercent + "% stop loss for " + quantity + " shares (" + directionStr
-                            + ")");
-                } else {
-                    showError("Instrument Not Found", "Could not find the instrument in the service.");
-                }
-
-            } catch (NumberFormatException e) {
-                showError("Invalid Input", "Please enter valid numeric values.");
-            } catch (Exception e) {
-                showError("Error Creating Position", "An error occurred: " + e.getMessage());
-                e.printStackTrace();
-            }
+        } catch (Exception e) {
+            // Price retrieval failed, dialog has already been closed by getLastTradedPrice
+            LOGGER.error("Cannot proceed with trigger dialog due to price retrieval failure", e);
         }
     }
 
@@ -506,18 +400,46 @@ public class InstrumentBrowserPanel extends BorderPane {
     }
 
     private BigDecimal getLastTradedPrice(InstrumentEntry instrument) {
-        // In a real implementation, this would get the actual LTP from a market data
-        // service
-        // For demonstration, we'll return a simulated price based on strike price or a
-        // default value
-        if (instrument.getStrikePrice() != null) {
-            // For options, use a value near the strike price
-            double randomFactor = 0.9 + Math.random() * 0.2; // Between 0.9 and 1.1
-            return instrument.getStrikePrice().multiply(new BigDecimal(randomFactor)).setScale(2,
-                    BigDecimal.ROUND_HALF_UP);
-        } else {
-            // For non-options, use a random price
-            return new BigDecimal(Math.round(1000 + Math.random() * 9000)).setScale(2, BigDecimal.ROUND_HALF_UP);
+        // Display status message about fetching LTP
+        statusLabel.setText("Fetching price for " + instrument.getTradingSymbol() + "...");
+
+        try {
+            // Get the instrument ID/trading symbol
+            String instrumentId = instrument.getTradingSymbol();
+
+            // Format the instrument ID with exchange prefix (required by Kite API)
+            // Example: "NFO:NIFTY23MAYFUT" instead of just "NIFTY23MAYFUT"
+            String formattedId = instrument.getExchange() + ":" + instrumentId;
+
+            // Log the LTP fetch attempt
+            LOGGER.info("Fetching LTP for: " + formattedId);
+
+            // Make a direct API call to get the current LTP
+            Map<String, BigDecimal> ltpData = kiteClient.getLTP(Collections.singletonList(formattedId));
+
+            // Extract the price from the response
+            if (ltpData != null && !ltpData.isEmpty()) {
+                BigDecimal price = ltpData.values().iterator().next();
+                if (price != null && price.compareTo(BigDecimal.ZERO) > 0) {
+                    LOGGER.info("Received LTP for " + formattedId + ": " + price);
+                    statusLabel.setText("Price for " + instrumentId + ": " + price);
+                    return price;
+                } else {
+                    throw new RuntimeException("API returned zero or null price");
+                }
+            } else {
+                throw new RuntimeException("No data returned from API");
+            }
+        } catch (Exception e) {
+            String errorMsg = "Unable to get market price: " + e.getMessage();
+            LOGGER.error(errorMsg, e);
+            statusLabel.setText(errorMsg);
+            showError("Price Retrieval Error",
+                    "Could not retrieve current market price for " + instrument.getTradingSymbol() +
+                            "\n\nError: " + e.getMessage() +
+                            "\n\nPlease try again or check your connection to Kite API.");
+
+            throw new RuntimeException("Failed to get price data: " + e.getMessage(), e);
         }
     }
 

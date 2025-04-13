@@ -51,6 +51,14 @@ public class OrderExecutionCoordinator {
     // Map of order ID to best option pair
     private final ConcurrentMap<String, OptionPair> bestOptionPairs = new ConcurrentHashMap<>();
 
+    // Track orders that are currently being scheduled for preparation to prevent
+    // duplicates
+    private final Set<String> preparationScheduled = Collections.synchronizedSet(new HashSet<>());
+
+    // Track which execution stages are currently running to prevent duplicate
+    // executions
+    private final Set<String> currentlyExecuting = Collections.synchronizedSet(new HashSet<>());
+
     // Services and managers
     private final OrderRepository orderRepository;
     private final InstrumentService instrumentService;
@@ -188,10 +196,14 @@ public class OrderExecutionCoordinator {
 
             for (ScheduledOrder order : ordersToExecute) {
                 // If we're not already preparing this order, start the preparation
-                if (!optionChainServices.containsKey(order.getOrderId())) {
-                    LOGGER.info("Order ready for preparation: " + order.getOrderId() +
-                            ", execution time: " + formatDateTime(order.getExecutionTime()));
-                    scheduleOrderPreparation(order);
+                synchronized (preparationScheduled) {
+                    if (!optionChainServices.containsKey(order.getOrderId())
+                            && !preparationScheduled.contains(order.getOrderId())) {
+                        LOGGER.info("Order ready for preparation: " + order.getOrderId() +
+                                ", execution time: " + formatDateTime(order.getExecutionTime()));
+                        preparationScheduled.add(order.getOrderId());
+                        scheduleOrderPreparation(order);
+                    }
                 }
             }
         } catch (Exception e) {
@@ -287,9 +299,20 @@ public class OrderExecutionCoordinator {
      */
     private void startOrderPreparation(ScheduledOrder order) {
         String orderId = order.getOrderId();
-        LOGGER.info("Starting preparation for order: " + orderId);
+        String executionId = orderId + "-PREP";
+
+        // Check if this preparation is already being executed
+        synchronized (currentlyExecuting) {
+            if (currentlyExecuting.contains(executionId)) {
+                LOGGER.info("Skipping duplicate preparation execution for: " + orderId);
+                return;
+            }
+            currentlyExecuting.add(executionId);
+        }
 
         try {
+            LOGGER.info("Starting preparation for order: " + orderId);
+
             String indexSymbol = order.getParams().getIndexSymbol();
             LOGGER.info("Preparation: Checking spot price for index: " + indexSymbol);
 
@@ -348,6 +371,12 @@ public class OrderExecutionCoordinator {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error in order preparation for " + orderId + ": " + e.getMessage(), e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+        } finally {
+            // Always remove from preparation scheduled set even if an exception occurs
+            preparationScheduled.remove(orderId);
+
+            // Always remove from currently executing set
+            currentlyExecuting.remove(executionId);
         }
     }
 
@@ -379,6 +408,17 @@ public class OrderExecutionCoordinator {
      */
     private void executeHedgeOrders(ScheduledOrder order) {
         String orderId = order.getOrderId();
+        String executionId = orderId + "-HEDGE";
+
+        // Check if these hedge orders are already being executed
+        synchronized (currentlyExecuting) {
+            if (currentlyExecuting.contains(executionId)) {
+                LOGGER.info("Skipping duplicate hedge order execution for: " + orderId);
+                return;
+            }
+            currentlyExecuting.add(executionId);
+        }
+
         LOGGER.info("Executing hedge orders for: " + orderId);
 
         // Log attempt
@@ -494,6 +534,9 @@ public class OrderExecutionCoordinator {
             LOGGER.log(Level.SEVERE, "Error executing hedge orders for order: " + orderId, e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
             cleanupOrder(orderId);
+        } finally {
+            // Always remove from currently executing set
+            currentlyExecuting.remove(executionId);
         }
     }
 
@@ -525,6 +568,17 @@ public class OrderExecutionCoordinator {
      */
     private void executeMainOrder(ScheduledOrder order) {
         String orderId = order.getOrderId();
+        String executionId = orderId + "-MAIN";
+
+        // Check if this main order is already being executed
+        synchronized (currentlyExecuting) {
+            if (currentlyExecuting.contains(executionId)) {
+                LOGGER.info("Skipping duplicate main order execution for: " + orderId);
+                return;
+            }
+            currentlyExecuting.add(executionId);
+        }
+
         LOGGER.info("Executing main order: " + orderId);
 
         // Log attempt
@@ -653,6 +707,9 @@ public class OrderExecutionCoordinator {
             LOGGER.log(Level.SEVERE, "Error executing main order: " + orderId, e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
             cleanupOrder(orderId);
+        } finally {
+            // Always remove from currently executing set
+            currentlyExecuting.remove(executionId);
         }
     }
 

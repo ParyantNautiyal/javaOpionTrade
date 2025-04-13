@@ -11,6 +11,7 @@ import com.optiontrading.service.model.OptionType;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.order.OrderRepository;
+import com.optiontrading.resources.ResourceManager;
 
 import javax.swing.*;
 import javax.swing.border.EmptyBorder;
@@ -26,6 +27,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
+import java.util.logging.Logger;
 
 /**
  * Simple UI for entering order details with instrument selection dropdowns
@@ -33,8 +35,11 @@ import java.util.stream.Collectors;
 @Singleton
 public class OrderEntryUI extends JFrame {
     private static final long serialVersionUID = 1L;
+    private static final Logger LOGGER = Logger.getLogger(OrderEntryUI.class.getName());
+
     private final InstrumentService instrumentService;
     private final OrderRepository orderRepository;
+    private final ResourceManager resourceManager;
 
     // Dropdown components
     private JComboBox<String> indexSelector;
@@ -51,9 +56,11 @@ public class OrderEntryUI extends JFrame {
     private List<Instrument> filteredInstruments = new ArrayList<>();
 
     @Inject
-    public OrderEntryUI(InstrumentService instrumentService, OrderRepository orderRepository) {
+    public OrderEntryUI(InstrumentService instrumentService, OrderRepository orderRepository,
+            ResourceManager resourceManager) {
         this.instrumentService = instrumentService;
         this.orderRepository = orderRepository;
+        this.resourceManager = resourceManager;
 
         // Initialize UI
         initializeUI();
@@ -69,7 +76,16 @@ public class OrderEntryUI extends JFrame {
 
     private void initializeUI() {
         setTitle("Option Trading - Order Entry");
-        setDefaultCloseOperation(JFrame.DISPOSE_ON_CLOSE);
+        setDefaultCloseOperation(JFrame.DO_NOTHING_ON_CLOSE);
+
+        // Add window listener to properly shutdown the application
+        addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowClosing(java.awt.event.WindowEvent windowEvent) {
+                shutdown();
+            }
+        });
+
         setSize(550, 450);
         setLocationRelativeTo(null);
 
@@ -406,5 +422,46 @@ public class OrderEntryUI extends JFrame {
             OrderEntryUI orderEntryUI = injector.getInstance(OrderEntryUI.class);
             orderEntryUI.setVisible(true);
         });
+    }
+
+    private void shutdown() {
+        LOGGER.info("Shutting down OrderEntryUI");
+        try {
+            // First try to close any trade log handlers
+            try {
+                com.optiontrading.utils.TradeLogManager.shutdown();
+                LOGGER.info("TradeLogManager shutdown completed");
+            } catch (Exception e) {
+                LOGGER.warning("Error shutting down TradeLogManager: " + e.getMessage());
+            }
+
+            // Then use ResourceManager for proper shutdown
+            if (resourceManager != null) {
+                LOGGER.info("Shutting down ResourceManager from UI");
+                resourceManager.shutdown();
+                LOGGER.info("ResourceManager shutdown completed");
+            }
+
+            // Also close any logging handlers
+            try {
+                com.optiontrading.logging.LoggingConfigurator.shutdown();
+                LOGGER.info("LoggingConfigurator shutdown completed");
+            } catch (Exception e) {
+                LOGGER.warning("Error shutting down LoggingConfigurator: " + e.getMessage());
+            }
+
+            // Clean up any lock files
+            try {
+                com.optiontrading.utils.LockFileCleanup.cleanupLockFiles();
+            } catch (Exception e) {
+                LOGGER.warning("Error cleaning up lock files: " + e.getMessage());
+            }
+
+            // Dispose the UI
+            dispose();
+        } catch (Exception e) {
+            LOGGER.severe("Error during shutdown: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 }

@@ -86,7 +86,7 @@ public class MarketDataProvider implements MarketDataService {
             updateTimer.cancel();
         }
 
-        updateTimer = timerManager.createTimer(true);
+        updateTimer = timerManager.createTimer("MarketData-Updater", true);
         updateTimer.scheduleAtFixedRate(new PriceUpdateTask(), 1000, quoteUpdateInterval); // Start after 1 second, then
                                                                                            // use configured interval
 
@@ -99,6 +99,9 @@ public class MarketDataProvider implements MarketDataService {
     @Override
     public void start() {
         LOGGER.info("Starting MarketDataProvider");
+
+        // Test log message to verify market data logging filter
+        LOGGER.info("TEST LOG: This message should appear when MARKET_DATA logging mode is selected");
 
         // Start update timer if not already running
         if (updateTimer == null) {
@@ -326,6 +329,14 @@ public class MarketDataProvider implements MarketDataService {
         @Override
         public void run() {
             try {
+                // Log to verify market data logging filter is working correctly
+                LOGGER.info("TEST LOG: Market data update task running - this should appear in MARKET_DATA mode");
+
+                // If no instruments are being monitored, do nothing
+                if (monitoredInstruments.isEmpty()) {
+                    return;
+                }
+
                 // Get the current set of monitored instruments
                 Set<String> instruments = new HashSet<>(monitoredInstruments);
 

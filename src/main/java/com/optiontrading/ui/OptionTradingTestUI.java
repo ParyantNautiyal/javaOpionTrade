@@ -17,6 +17,7 @@ import com.optiontrading.ui.panels.InstrumentBrowserPanel;
 import com.optiontrading.ui.panels.OrderHistoryPanel;
 import com.optiontrading.ui.panels.OrderSchedulerPanel;
 import com.optiontrading.ui.panels.PositionMonitorPanel;
+import com.optiontrading.ui.panels.SettingsPanel;
 import com.optiontrading.utils.TradeLogManager;
 
 import javafx.application.Application;
@@ -45,6 +46,8 @@ import java.util.logging.SimpleFormatter;
  * JavaFX Testing UI for Option Trading backend
  */
 public class OptionTradingTestUI extends Application {
+    private static final Logger LOGGER = Logger.getLogger(OptionTradingTestUI.class.getName());
+
     // Dependency injection
     private Injector injector;
     private ApplicationContext appContext;
@@ -121,6 +124,7 @@ public class OptionTradingTestUI extends Application {
             addMarketDataTab();
             addPositionMonitorTab();
             addSystemMonitorTab();
+            addSettingsTab();
 
             // Create status bar
             statusBar = new StatusBar(appContext);
@@ -207,6 +211,12 @@ public class OptionTradingTestUI extends Application {
         mainTabPane.getTabs().add(tab);
     }
 
+    private void addSettingsTab() {
+        Tab tab = new Tab("Settings");
+        tab.setContent(new SettingsPanel());
+        mainTabPane.getTabs().add(tab);
+    }
+
     private void showError(String title, String header, String content) {
         Alert alert = new Alert(AlertType.ERROR);
         alert.setTitle(title);
@@ -221,7 +231,35 @@ public class OptionTradingTestUI extends Application {
             TradeLogManager.shutdown();
 
             if (appContext != null) {
+                // First shutdown ApplicationContext services
                 appContext.shutdown();
+
+                // Then get ResourceManager to properly shutdown all resources
+                try {
+                    com.optiontrading.resources.ResourceManager resourceManager = appContext
+                            .getService(com.optiontrading.resources.ResourceManager.class);
+                    if (resourceManager != null) {
+                        LOGGER.info("Shutting down ResourceManager from UI");
+                        resourceManager.shutdown();
+                        LOGGER.info("ResourceManager shutdown completed");
+                    }
+                } catch (Exception e) {
+                    LOGGER.log(Level.SEVERE, "Error shutting down ResourceManager", e);
+                }
+
+                // Shutdown all logging
+                try {
+                    com.optiontrading.logging.LoggingConfigurator.shutdown();
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error shutting down logging system", e);
+                }
+
+                // Clean up any lock files that might still exist
+                try {
+                    com.optiontrading.utils.LockFileCleanup.cleanupLockFiles();
+                } catch (Exception e) {
+                    LOGGER.log(Level.WARNING, "Error cleaning up lock files", e);
+                }
             }
         } catch (Exception e) {
             e.printStackTrace();
@@ -233,48 +271,17 @@ public class OptionTradingTestUI extends Application {
      */
     private void configureLogging() {
         try {
-            // Create logs directory if it doesn't exist
-            File logsDir = new File("logs");
-            if (!logsDir.exists()) {
-                boolean created = logsDir.mkdirs();
-                System.out.println("Created logs directory: " + created);
-            }
+            // Use the new LoggingConfigurator to set up startup logging
+            com.optiontrading.logging.LoggingConfigurator.configureLogging(
+                    com.optiontrading.logging.LoggingConfigurator.LoggingMode.STARTUP);
 
-            // Configure FileHandler to write to logs/app.log with append=true
-            FileHandler fileHandler = new FileHandler("logs/app.log", true);
-            fileHandler.setFormatter(new SimpleFormatter() {
-                @Override
-                public String format(java.util.logging.LogRecord record) {
-                    return String.format("[UI] %1$tF %1$tT.%1$tL [%2$s] %3$s: %4$s %n",
-                            new Date(record.getMillis()),
-                            record.getLevel().getName(),
-                            record.getLoggerName(),
-                            record.getMessage());
-                }
-            });
-
-            // Add the file handler to the root logger
-            Logger rootLogger = Logger.getLogger("");
-
-            // Remove existing handlers to avoid duplication
-            for (Handler handler : rootLogger.getHandlers()) {
-                if (handler instanceof ConsoleHandler) {
-                    rootLogger.removeHandler(handler);
-                }
-            }
-
-            rootLogger.addHandler(fileHandler);
-
-            // Set logging level
-            rootLogger.setLevel(Level.INFO);
-
-            // Create a dedicated UI logger
+            // Configure a UI-specific logger as well
             Logger uiLogger = Logger.getLogger("com.optiontrading.ui");
             uiLogger.setLevel(Level.INFO);
             uiLogger.info("UI Logging initialized successfully");
 
-            System.out.println("Logging configured to write to logs/app.log");
-        } catch (IOException e) {
+            System.out.println("Logging configured using LoggingConfigurator in STARTUP mode");
+        } catch (Exception e) {
             System.err.println("Failed to configure logging: " + e.getMessage());
             e.printStackTrace();
         }
