@@ -1,7 +1,6 @@
 package com.optiontrading.service.order;
 
 import com.optiontrading.events.EventBus;
-import com.optiontrading.logging.OrderLogger;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.OrderStatus;
 import com.optiontrading.service.model.ScheduledOrder;
@@ -43,9 +42,7 @@ public class OrderRepository {
     @Inject
     public OrderRepository(EventBus eventBus) {
         this.eventBus = eventBus;
-        OrderLogger.initialize();
         LOGGER.info("Initialized OrderRepository with dependency injection");
-        OrderLogger.info("OrderRepository initialized and ready for order management");
     }
 
     /**
@@ -63,23 +60,6 @@ public class OrderRepository {
         orders.put(order.getOrderId(), order);
 
         LOGGER.info("Created scheduled order: " + order);
-
-        // Log detailed order creation with dedicated logger
-        OrderLogger.logOrderCreation(
-                order.getOrderId(),
-                params.getIndexSymbol(),
-                params.getExpiryDate().format(DATE_FORMATTER),
-                params.getOrderType().toString(),
-                params.getExecutionTime().format(TIME_FORMATTER));
-
-        // Log specific details about the order parameters
-        OrderLogger.detail("ORDER PARAMETERS: " + order.getOrderId() +
-                "\n    Threshold: " + params.getThreshold() +
-                "\n    Premium: " + params.getTargetPremium() +
-                "\n    Lots: " + params.getLots() +
-                "\n    StopLoss: " + params.isStopLossEnabled() +
-                "\n    Hedging: " + params.isHedgingEnabled() +
-                (params.isHedgingEnabled() ? "\n    HedgePointDiff: " + params.getHedgePointDifference() : ""));
 
         // Publish event (you would create this class)
         eventBus.publishAsync(new OrderCreatedEvent(order));
@@ -118,10 +98,7 @@ public class OrderRepository {
             return Collections.emptyList();
         }
 
-        OrderLogger.detail("CHECKING ORDERS in time range: " + from.format(TIME_FORMATTER) +
-                " to " + to.format(TIME_FORMATTER));
-
-        List<ScheduledOrder> result = orders.values().stream()
+        return orders.values().stream()
                 .filter(order -> order.getStatus() == OrderStatus.SCHEDULED)
                 .filter(order -> {
                     LocalDateTime executionTime = order.getExecutionTime();
@@ -130,18 +107,6 @@ public class OrderRepository {
                             executionTime.isBefore(to);
                 })
                 .collect(Collectors.toList());
-
-        if (!result.isEmpty()) {
-            OrderLogger.info("FOUND " + result.size() + " orders to execute in time range");
-            for (ScheduledOrder order : result) {
-                OrderLogger.detail("ORDER SCHEDULED FOR EXECUTION: " + order.getOrderId() +
-                        ", Time: " + order.getExecutionTime().format(TIME_FORMATTER));
-            }
-        } else {
-            OrderLogger.detail("NO ORDERS found for execution in time range");
-        }
-
-        return result;
     }
 
     /**
@@ -154,7 +119,7 @@ public class OrderRepository {
     public boolean updateOrderStatus(String orderId, OrderStatus newStatus) {
         ScheduledOrder order = orders.get(orderId);
         if (order == null) {
-            OrderLogger.warning("Cannot update status for non-existent order: " + orderId);
+            LOGGER.warning("Cannot update status for non-existent order: " + orderId);
             return false;
         }
 
@@ -162,7 +127,6 @@ public class OrderRepository {
         order.setStatus(newStatus);
 
         LOGGER.info("Updated order " + orderId + " status: " + oldStatus + " -> " + newStatus);
-        OrderLogger.logStatusChange(orderId, oldStatus.toString(), newStatus.toString());
 
         // Publish event (you would create this class)
         eventBus.publishAsync(new OrderStatusChangedEvent(orderId, oldStatus, newStatus));
@@ -183,7 +147,6 @@ public class OrderRepository {
         }
 
         LOGGER.info("Deleted order: " + order);
-        OrderLogger.info("ORDER DELETED: " + orderId);
 
         // Publish event (you would create this class)
         eventBus.publishAsync(new OrderDeletedEvent(orderId));
@@ -199,11 +162,6 @@ public class OrderRepository {
      */
     public void storePreFilteredInstruments(String orderId, List<Instrument> instruments) {
         preFilteredInstrumentsMap.put(orderId, instruments);
-        OrderLogger.logInstrumentFiltering(
-                orderId,
-                getOrder(orderId).getParams().getIndexSymbol(),
-                getOrder(orderId).getParams().getExpiryDate().format(DATE_FORMATTER),
-                instruments.size());
     }
 
     /**
@@ -213,11 +171,7 @@ public class OrderRepository {
      * @return the pre-filtered instruments or null if not found
      */
     public List<Instrument> getPreFilteredInstruments(String orderId) {
-        List<Instrument> instruments = preFilteredInstrumentsMap.get(orderId);
-        if (instruments != null) {
-            OrderLogger.detail("RETRIEVED " + instruments.size() + " pre-filtered instruments for order: " + orderId);
-        }
-        return instruments;
+        return preFilteredInstrumentsMap.get(orderId);
     }
 
     /**
@@ -227,6 +181,5 @@ public class OrderRepository {
      */
     public void clearPreFilteredInstruments(String orderId) {
         preFilteredInstrumentsMap.remove(orderId);
-        OrderLogger.detail("CLEARED pre-filtered instruments for order: " + orderId);
     }
 }

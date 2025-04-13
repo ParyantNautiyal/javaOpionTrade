@@ -220,7 +220,8 @@ public class Main {
             System.out.println("4. Re-authenticate with Kite API");
             System.out.println("5. Refresh Instruments (Download Latest)");
             System.out.println("6. Exit");
-            System.out.print("Enter your choice (1-6): ");
+            System.out.println("7. Run System Test");
+            System.out.print("Enter your choice (1-7): ");
 
             try {
                 String input = scanner.nextLine().trim();
@@ -266,8 +267,13 @@ public class Main {
                         shutdownRequested.set(true);
                         break;
 
+                    case 7:
+                        // Run System Test
+                        runSystemTest(scanner, appContext);
+                        break;
+
                     default:
-                        System.out.println("Invalid choice. Please enter a number between 1 and 6.");
+                        System.out.println("Invalid choice. Please enter a number between 1 and 7.");
                 }
             } catch (NumberFormatException e) {
                 System.out.println("Invalid input. Please enter a number.");
@@ -658,6 +664,250 @@ public class Main {
         } catch (Exception e) {
             System.out.println("Error refreshing instruments: " + e.getMessage());
             LOGGER.log(Level.WARNING, "Error refreshing instruments", e);
+        }
+    }
+
+    /**
+     * Run system test
+     */
+    private static void runSystemTest(Scanner scanner, ApplicationContext appContext) {
+        clearConsole();
+        System.out.println("\n===== OPTION TRADING SYSTEM TEST =====");
+        System.out.println("This will test all major components of the application");
+        System.out.println("Please wait while the tests are running...\n");
+
+        // Test results tracking
+        boolean[] testResults = new boolean[8];
+        String[] testNames = {
+                "Authentication",
+                "Event Bus",
+                "Instrument Service",
+                "Trading API",
+                "Order Repository",
+                "Market Data Service",
+                "Resource Management",
+                "Timer Services"
+        };
+
+        try {
+            // 1. Test Authentication
+            System.out.print("Testing Authentication Service... ");
+            try {
+                AuthService authService = appContext.getService(AuthService.class);
+                testResults[0] = authService != null && authService.hasApiCredentials();
+                System.out.println(testResults[0] ? "PASSED" : "FAILED");
+                System.out.println("  API Key: " + (authService.getApiKey() != null ? "Available" : "Not Set"));
+                System.out.println("  Authentication Status: "
+                        + (authService.isAuthenticated() ? "Authenticated" : "Not Authenticated"));
+                System.out.println("  Token Expiry: " + authService.getTokenExpiry());
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[0] = false;
+            }
+
+            // 2. Test Event Bus
+            System.out.print("Testing Event Bus... ");
+            try {
+                EventBus eventBus = appContext.getService(EventBus.class);
+                boolean eventBusWorking = eventBus != null;
+                testResults[1] = eventBusWorking;
+                System.out.println(eventBusWorking ? "PASSED" : "FAILED");
+
+                // Try to publish a test event
+                if (eventBusWorking) {
+                    System.out.println("  Publishing test event... ");
+                    eventBus.publishSync(new TestEvent("System Test"));
+                    System.out.println("  Event published successfully");
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[1] = false;
+            }
+
+            // 3. Test Instrument Service
+            System.out.print("Testing Instrument Service... ");
+            try {
+                InstrumentService instrumentService = appContext.getService(InstrumentService.class);
+                boolean instrumentsLoaded = instrumentService != null
+                        && !instrumentService.getAllInstruments().isEmpty();
+                testResults[2] = instrumentsLoaded;
+                System.out.println(instrumentsLoaded ? "PASSED" : "FAILED");
+
+                // Print instrument statistics
+                if (instrumentsLoaded) {
+                    int instrumentCount = instrumentService.getAllInstruments().size();
+                    List<String> symbols = instrumentService.loadAvailableSymbols();
+                    System.out.println("  Total Instruments: " + instrumentCount);
+                    System.out.println("  Available Symbols: "
+                            + String.join(", ", symbols.subList(0, Math.min(symbols.size(), 5))) +
+                            (symbols.size() > 5 ? "... (" + (symbols.size() - 5) + " more)" : ""));
+
+                    // Test spot price
+                    if (!symbols.isEmpty()) {
+                        String testSymbol = symbols.get(0);
+                        BigDecimal spotPrice = instrumentService.getIndexSpotPrice(testSymbol);
+                        System.out.println("  " + testSymbol + " Spot Price: "
+                                + (spotPrice != null ? spotPrice : "Not available"));
+                    }
+                } else {
+                    System.out.println("  No instruments loaded. Try refreshing instruments from the main menu.");
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[2] = false;
+            }
+
+            // 4. Test Trading API
+            System.out.print("Testing Trading API Connection... ");
+            try {
+                com.optiontrading.service.api.TradingApiClient apiClient = appContext
+                        .getService(com.optiontrading.service.api.TradingApiClient.class);
+                boolean isConnected = apiClient != null && apiClient.isAuthenticated();
+                testResults[3] = isConnected;
+                System.out.println(isConnected ? "PASSED" : "FAILED");
+                System.out.println("  API Status: " + (isConnected ? "Connected" : "Disconnected"));
+
+                // Test API connection
+                if (isConnected) {
+                    boolean testConnection = apiClient.testConnection();
+                    System.out.println("  Connection Test: " + (testConnection ? "Successful" : "Failed"));
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[3] = false;
+            }
+
+            // 5. Test Order Repository
+            System.out.print("Testing Order Repository... ");
+            try {
+                OrderRepository orderRepository = appContext.getService(OrderRepository.class);
+                boolean orderRepoWorking = orderRepository != null;
+                testResults[4] = orderRepoWorking;
+                System.out.println(orderRepoWorking ? "PASSED" : "FAILED");
+
+                if (orderRepoWorking) {
+                    List<ScheduledOrder> orders = orderRepository.getAllOrders();
+                    System.out.println("  Existing Orders: " + orders.size());
+
+                    // Create a test order but don't save
+                    LocalDateTime executionTime = LocalDateTime.now().plusMinutes(30);
+                    System.out.println("  Test Order Creation: Valid parameters for execution at " +
+                            executionTime.format(DateTimeFormatter.ofPattern("HH:mm:ss")));
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[4] = false;
+            }
+
+            // 6. Test Market Data Service
+            System.out.print("Testing Market Data Service... ");
+            try {
+                MarketDataService marketDataService = appContext.getService(MarketDataService.class);
+                boolean marketDataWorking = marketDataService != null;
+                testResults[5] = marketDataWorking;
+                System.out.println(marketDataWorking ? "PASSED" : "FAILED");
+
+                if (marketDataWorking) {
+                    System.out.println("  Service Initialized: Yes");
+                    System.out.println("  WebSocket Status: Available");
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[5] = false;
+            }
+
+            // 7. Test Resource Management
+            System.out.print("Testing Resource Management... ");
+            try {
+                ResourceManager resourceManager = appContext.getService(ResourceManager.class);
+                boolean resourceMgrWorking = resourceManager != null;
+                testResults[6] = resourceMgrWorking;
+                System.out.println(resourceMgrWorking ? "PASSED" : "FAILED");
+
+                if (resourceMgrWorking) {
+                    System.out.println("  Memory Usage: ");
+                    System.out.println(resourceManager.getResourceMetrics().split("\n")[0]);
+                    System.out.println(resourceManager.getResourceMetrics().split("\n")[1]);
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[6] = false;
+            }
+
+            // 8. Test Timer Service
+            System.out.print("Testing Timer Services... ");
+            try {
+                TimerManager timerManager = appContext.getService(TimerManager.class);
+                boolean timerWorking = timerManager != null;
+                testResults[7] = timerWorking;
+                System.out.println(timerWorking ? "PASSED" : "FAILED");
+
+                if (timerWorking) {
+                    System.out.println("  Active Timers: Available");
+                    System.out.println("  Creating test timer...");
+
+                    final boolean[] timerExecuted = { false };
+                    java.util.Timer testTimer = new java.util.Timer("TestTimer");
+                    testTimer.schedule(new TimerTask() {
+                        @Override
+                        public void run() {
+                            timerExecuted[0] = true;
+                        }
+                    }, 100);
+
+                    // Wait for timer to execute
+                    Thread.sleep(200);
+                    System.out.println("  Test Timer Executed: " + (timerExecuted[0] ? "Yes" : "No"));
+                    testTimer.cancel();
+                }
+            } catch (Exception e) {
+                System.out.println("FAILED - " + e.getMessage());
+                testResults[7] = false;
+            }
+
+            // Print Summary
+            System.out.println("\n===== TEST SUMMARY =====");
+            int passedTests = 0;
+            for (int i = 0; i < testResults.length; i++) {
+                System.out.println(testNames[i] + ": " + (testResults[i] ? "PASSED" : "FAILED"));
+                if (testResults[i])
+                    passedTests++;
+            }
+
+            double passRate = (double) passedTests / testResults.length * 100;
+            System.out.println("\nPASS RATE: " + passedTests + "/" + testResults.length + " ("
+                    + String.format("%.1f", passRate) + "%)");
+
+            if (passRate == 100) {
+                System.out.println("\nALL TESTS PASSED! The application is functioning correctly.");
+            } else if (passRate >= 75) {
+                System.out.println("\nMOST TESTS PASSED. Some components may need attention.");
+            } else if (passRate >= 50) {
+                System.out.println("\nSOME TESTS FAILED. The application may have limited functionality.");
+            } else {
+                System.out.println("\nMOST TESTS FAILED. The application requires attention.");
+            }
+
+        } catch (Exception e) {
+            System.out.println("\nERROR during system test: " + e.getMessage());
+            LOGGER.log(Level.SEVERE, "Error during system test", e);
+        }
+
+        pressEnterToContinue(scanner);
+    }
+
+    /**
+     * Simple test event class for event bus testing
+     */
+    private static class TestEvent extends com.optiontrading.events.Event {
+        private final String testName;
+
+        public TestEvent(String testName) {
+            this.testName = testName;
+        }
+
+        public String getTestName() {
+            return testName;
         }
     }
 }

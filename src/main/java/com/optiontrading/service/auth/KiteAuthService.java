@@ -198,56 +198,66 @@ public class KiteAuthService implements AuthService {
 
         LOGGER.info("ACCESS TOKEN EXISTS: " + (accessToken != null && !accessToken.isEmpty()));
         if (accessToken != null && !accessToken.isEmpty()) {
-            LOGGER.info("ACCESS TOKEN (FIRST 5 CHARS): " + accessToken.substring(0, Math.min(5, accessToken.length()))
-                    + "***");
-        }
+            LOGGER.info("ACCESS TOKEN (FIRST 5 CHARS): " +
+                    (accessToken.length() > 5 ? accessToken.substring(0, 5) + "***" : accessToken));
 
-        LOGGER.info("TIMESTAMP EXISTS: " + (timestamp != null && !timestamp.isEmpty()));
-        if (timestamp != null && !timestamp.isEmpty()) {
-            LOGGER.info("TOKEN TIMESTAMP: " + timestamp);
-        }
+            // Check timestamp for basic validation
+            LOGGER.info("TIMESTAMP EXISTS: " + (timestamp != null && !timestamp.isEmpty()));
+            if (timestamp != null && !timestamp.isEmpty()) {
+                try {
+                    // First do a local timestamp check
+                    long tokenTimestamp = Long.parseLong(timestamp);
+                    Instant expiryTime = Instant.ofEpochMilli(tokenTimestamp)
+                            .plusSeconds(TOKEN_VALIDITY_HOURS * 3600);
 
-        if (accessToken == null || accessToken.isEmpty()) {
-            LOGGER.info("NO ACCESS TOKEN FOUND - AUTHENTICATION REQUIRED");
-            LOGGER.info("=========================================");
-            return false;
-        }
+                    if (Instant.now().isAfter(expiryTime)) {
+                        LOGGER.info("ACCESS TOKEN EXPIRED BY TIMESTAMP");
+                        LOGGER.info("=========================================");
+                        return false;
+                    }
 
-        if (timestamp == null || timestamp.isEmpty()) {
-            LOGGER.info("NO TIMESTAMP FOUND FOR ACCESS TOKEN - AUTHENTICATION REQUIRED");
-            LOGGER.info("=========================================");
-            return false;
-        }
+                    // Now do an actual API test call to verify token validity
+                    LOGGER.info("PERFORMING API VALIDATION CHECK");
+                    try {
+                        // Create a temporary KiteConnect instance for checking
+                        KiteConnect testClient = new KiteConnect(apiKey);
+                        testClient.setAccessToken(accessToken);
 
-        try {
-            long tokenTime = Long.parseLong(timestamp);
-            long currentTime = System.currentTimeMillis();
-            long validity = TOKEN_VALIDITY_HOURS * 60 * 60 * 1000; // Convert hours to milliseconds
-            long elapsedTime = currentTime - tokenTime;
-            long remainingTime = validity - elapsedTime;
+                        // Call a lightweight profile endpoint to test authentication
+                        testClient.getProfile();
 
-            boolean isValid = elapsedTime < validity;
-
-            if (isValid) {
-                LOGGER.info("ACCESS TOKEN IS VALID");
-                LOGGER.info("REMAINING TIME: " +
-                        (remainingTime / (60 * 60 * 1000)) + " HOURS, " +
-                        ((remainingTime % (60 * 60 * 1000)) / (60 * 1000)) + " MINUTES");
-            } else {
-                LOGGER.info("ACCESS TOKEN HAS EXPIRED");
-                LOGGER.info("ELAPSED TIME: " +
-                        (elapsedTime / (60 * 60 * 1000)) + " HOURS, " +
-                        ((elapsedTime % (60 * 60 * 1000)) / (60 * 1000)) + " MINUTES");
-                LOGGER.info("VALIDITY PERIOD: " + TOKEN_VALIDITY_HOURS + " HOURS");
+                        // If we get here, the API call succeeded and token is valid
+                        long remainingHours = Duration.between(Instant.now(), expiryTime).toHours();
+                        long remainingMinutes = Duration.between(Instant.now(), expiryTime).toMinutes() % 60;
+                        LOGGER.info("ACCESS TOKEN IS VALID (SERVER VERIFIED)");
+                        LOGGER.info("REMAINING TIME: " + remainingHours + " HOURS, " + remainingMinutes + " MINUTES");
+                        LOGGER.info("=========================================");
+                        return true;
+                    } catch (KiteException e) {
+                        // API call failed - token is invalid
+                        LOGGER.warning("ACCESS TOKEN REJECTED BY SERVER: " + e.message + " (Code: " + e.code + ")");
+                        LOGGER.info("=========================================");
+                        return false;
+                    } catch (IOException e) {
+                        // Network error - can't determine validity
+                        LOGGER.warning("NETWORK ERROR DURING TOKEN VALIDATION: " + e.getMessage());
+                        // Fall back to timestamp-based validation
+                        long remainingHours = Duration.between(Instant.now(), expiryTime).toHours();
+                        long remainingMinutes = Duration.between(Instant.now(), expiryTime).toMinutes() % 60;
+                        LOGGER.info("USING TIMESTAMP VALIDATION DUE TO NETWORK ERROR");
+                        LOGGER.info("REMAINING TIME: " + remainingHours + " HOURS, " + remainingMinutes + " MINUTES");
+                        LOGGER.info("=========================================");
+                        return true;
+                    }
+                } catch (NumberFormatException e) {
+                    LOGGER.warning("ERROR PARSING TOKEN TIMESTAMP: " + e.getMessage());
+                }
             }
-
-            LOGGER.info("=========================================");
-            return isValid;
-        } catch (NumberFormatException e) {
-            LOGGER.log(Level.SEVERE, "ERROR PARSING TOKEN TIMESTAMP", e);
-            LOGGER.info("=========================================");
-            return false;
         }
+
+        LOGGER.info("ACCESS TOKEN IS INVALID");
+        LOGGER.info("=========================================");
+        return false;
     }
 
     /**

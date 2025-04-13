@@ -15,7 +15,6 @@ import com.optiontrading.service.model.OptionType;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.google.inject.Provider;
-import com.optiontrading.logging.OrderLogger;
 import com.optiontrading.config.ConfigurationManager;
 
 import java.math.BigDecimal;
@@ -79,10 +78,6 @@ public class OrderExecutionCoordinator {
         // Start checking for orders to execute
         startOrderCheckTimer();
 
-        // Initialize OrderLogger
-        OrderLogger.initialize();
-        OrderLogger.info("OrderExecutionCoordinator initialized - ready to process scheduled orders");
-
         LOGGER.info("Initialized OrderExecutionCoordinator with dependency injection");
     }
 
@@ -130,8 +125,7 @@ public class OrderExecutionCoordinator {
             LocalDateTime now = LocalDateTime.now();
             LocalDateTime lookAhead = now.plusMinutes(6); // Changed from 5 to 6 minutes
 
-            OrderLogger.detail("SCHEDULING CHECK: Scanning for orders between " +
-                    formatDateTime(now) + " and " + formatDateTime(lookAhead));
+            LOGGER.fine("Scanning for orders between " + formatDateTime(now) + " and " + formatDateTime(lookAhead));
 
             // Log all active scheduled orders with their time remaining
             List<ScheduledOrder> allScheduledOrders = orderRepository.getAllOrders().stream()
@@ -139,15 +133,14 @@ public class OrderExecutionCoordinator {
                     .collect(java.util.stream.Collectors.toList());
 
             if (!allScheduledOrders.isEmpty()) {
-                OrderLogger
-                        .info("ACTIVE ORDERS STATUS CHECK: Found " + allScheduledOrders.size() + " scheduled orders");
+                LOGGER.info("Found " + allScheduledOrders.size() + " scheduled orders");
 
                 for (ScheduledOrder order : allScheduledOrders) {
                     LocalDateTime executionTime = order.getExecutionTime();
                     long minutesRemaining = ChronoUnit.MINUTES.between(now, executionTime);
                     long secondsRemaining = ChronoUnit.SECONDS.between(now, executionTime) % 60;
 
-                    OrderLogger.info("ORDER WAITING: " + order.getOrderId() +
+                    LOGGER.info("Order " + order.getOrderId() +
                             " | Index: " + order.getParams().getIndexSymbol() +
                             " | Execution Time: " + formatDateTime(executionTime) +
                             " | Time Remaining: " + minutesRemaining + " min " + secondsRemaining + " sec");
@@ -160,13 +153,13 @@ public class OrderExecutionCoordinator {
             LOGGER.info("Found " + ordersToExecute.size() + " orders to execute in the next 6 minutes");
 
             if (ordersToExecute.isEmpty()) {
-                OrderLogger.detail("No orders found for execution in the next 6 minutes");
+                LOGGER.fine("No orders found for execution in the next 6 minutes");
             } else {
                 for (ScheduledOrder order : ordersToExecute) {
                     LocalDateTime executionTime = order.getExecutionTime();
                     long secondsRemaining = ChronoUnit.SECONDS.between(now, executionTime);
 
-                    OrderLogger.info("ORDER DUE SOON: " + order.getOrderId() +
+                    LOGGER.info("Order due soon: " + order.getOrderId() +
                             " | Execution Time: " + formatDateTime(executionTime) +
                             " | Seconds remaining: " + secondsRemaining);
                 }
@@ -175,14 +168,13 @@ public class OrderExecutionCoordinator {
             for (ScheduledOrder order : ordersToExecute) {
                 // If we're not already preparing this order, start the preparation
                 if (!optionChainServices.containsKey(order.getOrderId())) {
-                    OrderLogger.info("ORDER READY FOR PREPARATION: " + order.getOrderId() +
+                    LOGGER.info("Order ready for preparation: " + order.getOrderId() +
                             ", execution time: " + formatDateTime(order.getExecutionTime()));
                     scheduleOrderPreparation(order);
                 }
             }
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error checking orders to execute", e);
-            OrderLogger.error("Failed to check for orders to execute", e);
         }
     }
 
@@ -274,29 +266,24 @@ public class OrderExecutionCoordinator {
      */
     private void startOrderPreparation(ScheduledOrder order) {
         String orderId = order.getOrderId();
-
         LOGGER.info("Starting preparation for order: " + orderId);
-        OrderLogger.logExecutionAttempt(orderId, "PREPARATION",
-                "Order preparation started at T-25s before execution time");
 
         try {
-            // Update order status
-            orderRepository.updateOrderStatus(orderId, OrderStatus.PREPARING);
-
-            // Get current spot price for the index
             String indexSymbol = order.getParams().getIndexSymbol();
-            BigDecimal spotPrice = instrumentService.getIndexSpotPrice(indexSymbol);
+            LOGGER.info("Preparation: Checking spot price for index: " + indexSymbol);
 
+            // Log attempt
+            LOGGER.info("Execution attempt: " + orderId + " - PREPARATION");
+
+            // Get spot price for the index
+            BigDecimal spotPrice = instrumentService.getIndexSpotPrice(indexSymbol);
             if (spotPrice == null) {
-                LOGGER.severe("Cannot find spot price for index: " + indexSymbol);
-                OrderLogger.error("PREPARATION FAILED: Cannot find spot price for index: " + indexSymbol, null);
+                LOGGER.severe("Preparation failed: Cannot find spot price for index: " + indexSymbol);
                 orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
                 return;
             }
 
-            OrderLogger.detail("SPOT PRICE: " + orderId +
-                    ", Index: " + indexSymbol +
-                    ", Price: " + spotPrice);
+            LOGGER.fine("Spot price: " + orderId + " - " + indexSymbol + " - " + spotPrice);
 
             // Get pre-filtered instruments (by index and expiry)
             List<Instrument> preFilteredInstruments = orderRepository.getPreFilteredInstruments(orderId);
@@ -338,8 +325,7 @@ public class OrderExecutionCoordinator {
             // Schedule hedge orders for T-10s
             scheduleHedgeOrders(order);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error preparing order: " + orderId, e);
-            OrderLogger.error("PREPARATION FAILED: " + e.getMessage(), e);
+            LOGGER.log(Level.SEVERE, "Error in order preparation for " + orderId + ": " + e.getMessage(), e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
         }
     }
@@ -372,10 +358,10 @@ public class OrderExecutionCoordinator {
      */
     private void executeHedgeOrders(ScheduledOrder order) {
         String orderId = order.getOrderId();
+        LOGGER.info("Executing hedge orders for: " + orderId);
 
-        LOGGER.info("Executing hedge orders for order: " + orderId);
-        OrderLogger.logExecutionAttempt(orderId, "HEDGING",
-                "Hedge order execution started at T-10s before main execution time");
+        // Log attempt
+        LOGGER.info("Execution attempt: " + orderId + " - HEDGING");
 
         try {
             // Get the best option pair
@@ -518,10 +504,10 @@ public class OrderExecutionCoordinator {
      */
     private void executeMainOrder(ScheduledOrder order) {
         String orderId = order.getOrderId();
-
         LOGGER.info("Executing main order: " + orderId);
-        OrderLogger.logExecutionAttempt(orderId, "MAIN EXECUTION",
-                "Main order execution started at scheduled execution time");
+
+        // Log attempt
+        LOGGER.info("Execution attempt: " + orderId + " - MAIN EXECUTION");
 
         try {
             // Get the best option pair
