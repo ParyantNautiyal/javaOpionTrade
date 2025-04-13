@@ -16,6 +16,9 @@ import com.google.inject.Inject;
 import com.google.inject.Singleton;
 import com.google.inject.Provider;
 import com.optiontrading.config.ConfigurationManager;
+import com.optiontrading.resources.ThreadManager;
+import com.optiontrading.service.market.MarketDataService;
+import com.optiontrading.service.position.PositionWatchlistService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -26,8 +29,14 @@ import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.Set;
+import java.util.Collections;
+import java.util.HashSet;
 
 /**
  * Coordinates the execution of scheduled orders
@@ -40,7 +49,7 @@ public class OrderExecutionCoordinator {
     private final Map<String, OptionChainService> optionChainServices = new ConcurrentHashMap<>();
 
     // Map of order ID to best option pair
-    private final Map<String, OptionPair> bestOptionPairs = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, OptionPair> bestOptionPairs = new ConcurrentHashMap<>();
 
     // Services and managers
     private final OrderRepository orderRepository;
@@ -50,6 +59,12 @@ public class OrderExecutionCoordinator {
     private final TradingService tradingService;
     private final Provider<OptionChainService> optionChainServiceProvider;
     private final ConfigurationManager configManager;
+    private final MarketDataService marketDataService;
+    private final ThreadManager threadManager;
+    private final PositionWatchlistService positionWatchlistService;
+
+    // Track which orders have already had MainOrderPlacedEvent published
+    private final Set<String> publishedMainOrderEvents = Collections.synchronizedSet(new HashSet<>());
 
     /**
      * Constructor with dependency injection
@@ -62,7 +77,10 @@ public class OrderExecutionCoordinator {
             EventBus eventBus,
             TradingService tradingService,
             Provider<OptionChainService> optionChainServiceProvider,
-            ConfigurationManager configManager) {
+            ConfigurationManager configManager,
+            MarketDataService marketDataService,
+            ThreadManager threadManager,
+            PositionWatchlistService positionWatchlistService) {
 
         this.orderRepository = orderRepository;
         this.instrumentService = instrumentService;
@@ -71,6 +89,9 @@ public class OrderExecutionCoordinator {
         this.tradingService = tradingService;
         this.optionChainServiceProvider = optionChainServiceProvider;
         this.configManager = configManager;
+        this.marketDataService = marketDataService;
+        this.threadManager = threadManager;
+        this.positionWatchlistService = positionWatchlistService;
 
         // Subscribe to events
         subscribeToEvents();
@@ -535,17 +556,29 @@ public class OrderExecutionCoordinator {
 
             // Place call option order
             LOGGER.info("Placing order for call option: " + callOption.getInstrumentId());
-            String callOrderId = tradingService.placeOrder(
-                    callOption,
-                    lots,
-                    callPrice, // Use the price from the option pair
-                    orderType,
-                    "MAIN-" + orderId);
+            String callOrderId = null;
+            try {
+                callOrderId = tradingService.placeOrder(
+                        callOption,
+                        lots,
+                        callPrice, // Use the price from the option pair
+                        orderType,
+                        "MAIN-" + orderId);
 
-            if (callOrderId != null) {
-                LOGGER.info("Call option order placed successfully, broker ID: " + callOrderId);
-            } else {
-                LOGGER.warning("Failed to place call option order");
+                if (callOrderId != null) {
+                    LOGGER.info("Call option order placed successfully, broker ID: " + callOrderId);
+                } else {
+                    LOGGER.warning("Failed to place call option order");
+                }
+            } catch (RuntimeException e) {
+                // Specially handle market closed errors
+                if (e.getMessage() != null && e.getMessage().startsWith("MARKET_CLOSED:")) {
+                    LOGGER.severe("Market closed error detected during call option order placement: " + e.getMessage());
+                    orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+                    cleanupOrder(orderId);
+                    return;
+                }
+                throw e; // Re-throw other exceptions
             }
 
             // Get the delay between orders from configuration
@@ -562,24 +595,57 @@ public class OrderExecutionCoordinator {
 
             // Place put option order
             LOGGER.info("Placing order for put option: " + putOption.getInstrumentId());
-            String putOrderId = tradingService.placeOrder(
-                    putOption,
-                    lots,
-                    putPrice, // Use the price from the option pair
-                    orderType,
-                    "MAIN-" + orderId);
+            String putOrderId = null;
+            try {
+                putOrderId = tradingService.placeOrder(
+                        putOption,
+                        lots,
+                        putPrice, // Use the price from the option pair
+                        orderType,
+                        "MAIN-" + orderId);
 
-            if (putOrderId != null) {
-                LOGGER.info("Put option order placed successfully, broker ID: " + putOrderId);
-            } else {
-                LOGGER.warning("Failed to place put option order");
+                if (putOrderId != null) {
+                    LOGGER.info("Put option order placed successfully, broker ID: " + putOrderId);
+                } else {
+                    LOGGER.warning("Failed to place put option order");
+                }
+            } catch (RuntimeException e) {
+                // Specially handle market closed errors
+                if (e.getMessage() != null && e.getMessage().startsWith("MARKET_CLOSED:")) {
+                    LOGGER.severe("Market closed error detected during put option order placement: " + e.getMessage());
+                    orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
+                    cleanupOrder(orderId);
+                    return;
+                }
+                throw e; // Re-throw other exceptions
             }
 
             // Update order status
-            orderRepository.updateOrderStatus(orderId, OrderStatus.COMPLETED);
+            boolean bothOrdersPlaced = (callOrderId != null && putOrderId != null);
+            orderRepository.updateOrderStatus(orderId,
+                    bothOrdersPlaced ? OrderStatus.COMPLETED : OrderStatus.FAILED);
 
-            // Publish event
-            eventBus.publishAsync(new MainOrderPlacedEvent(orderId, bestPair));
+            // Only publish the event if the orders were successfully placed
+            if (bothOrdersPlaced) {
+                // Publish event - use synchronous publish to ensure immediate handling
+                // Check if we've already published an event for this order
+                if (!publishedMainOrderEvents.contains(orderId)) {
+                    LOGGER.info("Publishing MainOrderPlacedEvent for order: " + orderId);
+                    try {
+                        eventBus.publish(new MainOrderPlacedEvent(orderId, bestPair));
+                        LOGGER.info("MainOrderPlacedEvent published successfully");
+                        // Mark this order as having had its event published
+                        publishedMainOrderEvents.add(orderId);
+                    } catch (Exception e) {
+                        LOGGER.severe("Error publishing MainOrderPlacedEvent: " + e.getMessage());
+                        e.printStackTrace();
+                    }
+                } else {
+                    LOGGER.info("Skipped publishing duplicate MainOrderPlacedEvent for order: " + orderId);
+                }
+            } else {
+                LOGGER.warning("Not publishing MainOrderPlacedEvent because one or both orders failed");
+            }
 
             // Clean up
             cleanupOrder(orderId);
@@ -596,11 +662,34 @@ public class OrderExecutionCoordinator {
      * @param event the event
      */
     private void handleBestOptionsUpdated(BestOptionsUpdatedEvent event) {
-        String orderId = event.getOrderId();
-        OptionPair optionPair = event.getOptionPair();
+        try {
+            String orderId = event.getOrderId();
+            OptionPair optionPair = event.getOptionPair();
 
-        // Store the best option pair
-        bestOptionPairs.put(orderId, optionPair);
+            LOGGER.info("Received BestOptionsUpdatedEvent for order: " + orderId);
+
+            if (optionPair == null) {
+                LOGGER.warning("Ignoring BestOptionsUpdatedEvent with null optionPair for order: " + orderId);
+                return;
+            }
+
+            // Store the best option pair
+            bestOptionPairs.put(orderId, optionPair);
+
+            LOGGER.info("Updated best option pair for order: " + orderId +
+                    " - call: " + (optionPair.hasCallOption() ? optionPair.getCallOption().getTradingSymbol() : "none")
+                    +
+                    " - put: " + (optionPair.hasPutOption() ? optionPair.getPutOption().getTradingSymbol() : "none"));
+
+            // Ensure we have the best pair when executing order
+            if (!optionChainServices.containsKey(orderId)) {
+                LOGGER.info("No active OptionChainService for order: " + orderId +
+                        " - best pair will be used when executing order");
+            }
+        } catch (Exception e) {
+            LOGGER.severe("Error handling BestOptionsUpdatedEvent: " + e.getMessage());
+            e.printStackTrace();
+        }
     }
 
     /**
@@ -620,6 +709,9 @@ public class OrderExecutionCoordinator {
 
         // Clear pre-filtered instruments
         orderRepository.clearPreFilteredInstruments(orderId);
+
+        // Remove from tracking maps
+        publishedMainOrderEvents.remove(orderId);
 
         LOGGER.info("Cleaned up resources for order: " + orderId);
     }

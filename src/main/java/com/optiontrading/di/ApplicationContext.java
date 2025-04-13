@@ -51,6 +51,30 @@ public class ApplicationContext {
         MarketDataService marketDataService = getService(MarketDataService.class);
         marketDataService.start();
 
+        // Initialize order execution coordinator
+        OrderExecutionCoordinator orderExecutionCoordinator = getService(OrderExecutionCoordinator.class);
+        // The coordinator initializes itself in its constructor, just make sure it's
+        // created
+        if (orderExecutionCoordinator != null) {
+            LOGGER.info("OrderExecutionCoordinator initialized");
+        } else {
+            LOGGER.severe("Failed to initialize OrderExecutionCoordinator");
+        }
+
+        // Initialize MainOrderPlacedEventHandler to ensure it's created and subscribed
+        // to events
+        try {
+            Object eventHandler = getService(com.optiontrading.service.order.MainOrderPlacedEventHandler.class);
+            if (eventHandler != null) {
+                LOGGER.info("MainOrderPlacedEventHandler successfully initialized");
+            } else {
+                LOGGER.severe("Failed to initialize MainOrderPlacedEventHandler");
+            }
+        } catch (Exception e) {
+            LOGGER.severe("Error initializing MainOrderPlacedEventHandler: " + e.getMessage());
+            e.printStackTrace();
+        }
+
         LOGGER.info("Started authenticated services");
     }
 

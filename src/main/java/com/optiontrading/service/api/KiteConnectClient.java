@@ -516,7 +516,7 @@ public class KiteConnectClient implements TradingApiClient {
                 params.put("price", price.toString());
             }
 
-            params.put("product", "CNC"); // Cash and carry
+            params.put("product", "NRML"); // Normal product type for options (was CNC)
             params.put("validity", "DAY");
 
             // Form the request body
@@ -562,6 +562,20 @@ public class KiteConnectClient implements TradingApiClient {
                 try {
                     JSONObject error = new JSONObject(errorBody);
                     String errorMessage = error.optString("message", "Unknown error");
+
+                    // Check for specific market closed error
+                    if (errorMessage.contains("market is closed") ||
+                            errorMessage.contains("not allowed") ||
+                            errorMessage.contains("Trading in NFO is not allowed")) {
+
+                        // Log a clear message indicating market is closed, with full error details
+                        LOGGER.severe("MARKET CLOSED ERROR: Cannot place order because market is not open. " +
+                                "Error: " + errorMessage);
+
+                        // Throw specialized exception that can be caught by OrderExecutionCoordinator
+                        throw new RuntimeException("MARKET_CLOSED: " + errorMessage);
+                    }
+
                     throw new RuntimeException(
                             "Failed to place order: " + errorMessage + " (Status: " + response.statusCode() + ")");
                 } catch (Exception e) {

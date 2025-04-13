@@ -31,6 +31,7 @@ import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.ConsoleHandler;
 import java.util.logging.FileHandler;
+import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
@@ -45,6 +46,8 @@ import com.optiontrading.service.instrument.InstrumentService;
 
 import java.util.ArrayList;
 import java.util.Objects;
+
+import com.optiontrading.utils.MainLogFilter;
 
 /**
  * Main entry point for the Option Trading application.
@@ -165,27 +168,46 @@ public class Main {
     }
 
     /**
-     * Configure logging to go to a file instead of console
+     * Configure logging for the application
      */
     private static void configureLogging() {
         try {
             // Create logs directory if it doesn't exist
-            File logsDir = new File("logs");
-            if (!logsDir.exists()) {
-                logsDir.mkdirs();
+            File logDir = new File("logs");
+            if (!logDir.exists()) {
+                logDir.mkdirs();
             }
 
-            // Configure FileHandler to write to logs/app.log
-            FileHandler fileHandler = new FileHandler("logs/app.log", true);
+            // Set up file handler
+            FileHandler fileHandler = new FileHandler("logs/app.log", 1048576, 10, true);
             fileHandler.setFormatter(new SimpleFormatter());
 
-            // Add the file handler to the root logger
+            // Apply our filter to show only OptionChainService logs
+            fileHandler.setFilter(new MainLogFilter());
+
+            // Get the root logger and set the level
             Logger rootLogger = Logger.getLogger("");
+            rootLogger.setLevel(Level.INFO);
+
+            // Remove any existing handlers to avoid duplicates
+            Handler[] handlers = rootLogger.getHandlers();
+            for (Handler handler : handlers) {
+                rootLogger.removeHandler(handler);
+            }
+
+            // Add our filtered handler
             rootLogger.addHandler(fileHandler);
 
-            LOGGER.info("Logging configured to write to logs/app.log");
+            // Also keep console output for startup information
+            ConsoleHandler consoleHandler = new ConsoleHandler();
+            consoleHandler.setLevel(Level.INFO);
+            consoleHandler.setFilter(new MainLogFilter());
+            rootLogger.addHandler(consoleHandler);
+
+            Logger.getLogger(Main.class.getName())
+                    .info("Logging configured to show only OptionChainService logs in logs/app.log and console");
         } catch (IOException e) {
-            System.err.println("Failed to configure logging: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -501,8 +523,14 @@ public class Main {
             int quantity = Integer.parseInt(scanner.nextLine().trim());
 
             // 6. ENTER PRICE
-            System.out.print("\nEnter Price (or 0 for market price): ");
+            System.out.print("\nEnter Target Premium (must be greater than 0, recommended: 500): ");
             BigDecimal price = new BigDecimal(scanner.nextLine().trim());
+
+            // Ensure premium is not zero
+            if (price.compareTo(BigDecimal.ZERO) <= 0) {
+                System.out.println("Target premium must be greater than 0. Setting to default value of 500.");
+                price = new BigDecimal("500");
+            }
 
             // 7. SELECT EXECUTION TIME (HOUR AND MINUTE SEPARATELY)
             LocalTime currentTime = LocalTime.now();

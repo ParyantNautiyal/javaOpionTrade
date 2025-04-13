@@ -439,74 +439,134 @@ public class KiteAuthService implements AuthService {
     }
 
     /**
-     * Generate a new access token using the request token
-     *
-     * @param requestToken the request token received from Kite
-     * @param userId       the user ID (optional, not used)
-     * @return the new access token
-     * @throws RuntimeException if generation fails
+     * Generate an access token using the request token
+     * 
+     * @param requestToken the request token to use
+     * @return the generated access token
+     */
+    public String generateAccessToken(String requestToken) {
+        return generateAccessToken(requestToken, this.userId != null ? this.userId : "");
+    }
+
+    /**
+     * Generate an access token using the request token and user ID
+     * 
+     * @param requestToken the request token to use
+     * @param userId       the user ID
+     * @return the generated access token
      */
     public String generateAccessToken(String requestToken, String userId) {
-        LOGGER.info("=============== GENERATING ACCESS TOKEN ===============");
         ensureApiCredentialsSet();
 
+        if (requestToken == null || requestToken.isEmpty()) {
+            throw new IllegalArgumentException("Request token cannot be empty");
+        }
+
+        // Use userId if provided, otherwise use empty string
+        this.userId = (userId != null) ? userId : "";
+        this.requestToken = requestToken;
+
         try {
-            // Initialize KiteConnect instance
-            KiteConnect kiteConnect = new KiteConnect(this.apiKey);
+            // Check if we can use the KiteConnect library
+            KiteConnect kiteConnect = new KiteConnect(apiKey);
 
-            LOGGER.info("USING KITECONNECT LIBRARY FOR TOKEN GENERATION");
-            LOGGER.info("API KEY: " + this.apiKey);
-            LOGGER.info("REQUEST TOKEN: " + requestToken);
+            try {
+                // Try to use the KiteConnect library's built-in function
+                com.zerodhatech.models.User user = kiteConnect.generateSession(requestToken, apiSecret);
 
-            // Use the library's method to generate the session
-            com.zerodhatech.models.User user = kiteConnect.generateSession(requestToken, this.apiSecret);
+                // Extract tokens from the user object
+                this.accessToken = user.accessToken;
+                this.publicToken = user.publicToken;
 
-            // Extract data from the user object
-            String newAccessToken = user.accessToken;
-            String newPublicToken = user.publicToken;
-            String newUserId = user.userId;
+                // If userId was not provided, use it from the response
+                if (this.userId == null || this.userId.isEmpty()) {
+                    this.userId = user.userId;
+                }
 
-            LOGGER.info("RECEIVED NEW ACCESS TOKEN: " +
-                    newAccessToken.substring(0, Math.min(5, newAccessToken.length())) + "***");
-            LOGGER.info("RECEIVED USER ID: " + newUserId);
+                LOGGER.info("Generated access token using KiteConnect library");
+            } catch (KiteException | IOException e) {
+                // Fall back to manual token generation using HTTP
+                LOGGER.warning("KiteConnect token generation failed, using manual HTTP method: " + e.getMessage());
 
-            // Update local state
-            this.accessToken = newAccessToken;
-            this.publicToken = newPublicToken;
-            this.userId = newUserId; // We store userId but don't compare it
-            this.tokenExpiryTime = Instant.now().plusSeconds(TOKEN_VALIDITY_HOURS * 3600);
+                try {
+                    // Call manual token generation method
+                    manualTokenGeneration();
+                } catch (Exception ex) {
+                    // If manual generation also fails, throw the original exception
+                    throw new RuntimeException("Failed to generate access token: " + e.getMessage(), e);
+                }
+            }
 
-            // Update properties object with new tokens
-            tokens.setProperty(ACCESS_TOKEN, newAccessToken);
-            tokens.setProperty(USER_ID, newUserId);
+            // Update properties with new values
+            tokens.setProperty(ACCESS_TOKEN, this.accessToken);
+            tokens.setProperty(REQUEST_TOKEN, this.requestToken);
+            if (this.userId != null && !this.userId.isEmpty()) {
+                tokens.setProperty(USER_ID, this.userId);
+            }
             tokens.setProperty(TOKEN_TIMESTAMP, String.valueOf(System.currentTimeMillis()));
 
-            LOGGER.info("UPDATED TOKENS IN MEMORY - SAVING TO FILE");
-
-            // Save tokens to file
+            // Save tokens
             saveTokens();
 
-            LOGGER.info("ACCESS TOKEN GENERATED SUCCESSFULLY");
-            LOGGER.info("ACCESS TOKEN EXPIRES AT: " + LocalDateTime.ofInstant(tokenExpiryTime, ZoneId.systemDefault()));
-            LOGGER.info("=================================================");
+            // Calculate and set token expiry time
+            this.tokenExpiryTime = Instant.now().plusSeconds(TOKEN_VALIDITY_HOURS * 3600);
 
             // Publish event
-            eventBus.publish(new AccessTokenGeneratedEvent(newAccessToken));
+            eventBus.publish(new AccessTokenGeneratedEvent(this.accessToken));
 
-            return newAccessToken;
-        } catch (KiteException e) {
-            LOGGER.log(Level.SEVERE, "KITE API ERROR GENERATING ACCESS TOKEN: " + e.message + " (code: " + e.code + ")",
-                    e);
-            LOGGER.info("=================================================");
-            throw new RuntimeException("Failed to generate access token: " + e.message, e);
-        } catch (IOException e) {
-            LOGGER.log(Level.SEVERE, "IO ERROR GENERATING ACCESS TOKEN", e);
-            LOGGER.info("=================================================");
-            throw new RuntimeException("Failed to generate access token: " + e.getMessage(), e);
+            return this.accessToken;
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "ERROR GENERATING ACCESS TOKEN", e);
-            LOGGER.info("=================================================");
+            LOGGER.log(Level.SEVERE, "Error generating access token", e);
             throw new RuntimeException("Failed to generate access token: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * Manual token generation using HTTP API
+     */
+    private void manualTokenGeneration() throws IOException, InterruptedException {
+        // Set up the token request
+        Map<String, String> formData = new HashMap<>();
+        formData.put("api_key", apiKey);
+        formData.put("request_token", requestToken);
+
+        // Calculate SHA256 checksum
+        String checksum = calculateChecksum(apiKey, requestToken, apiSecret);
+        formData.put("checksum", checksum);
+
+        // Create request body
+        String requestBody = formDataToString(formData);
+
+        // Create HTTP request
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(KITE_API_BASE + KITE_SESSION_TOKEN_URL))
+                .timeout(Duration.ofSeconds(10))
+                .header("Content-Type", "application/x-www-form-urlencoded")
+                .header("X-Kite-Version", "3")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+
+        // Send request
+        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+
+        // Parse response
+        if (response.statusCode() == 200) {
+            JSONObject json = new JSONObject(response.body());
+            if (json.has("data")) {
+                JSONObject data = json.getJSONObject("data");
+                this.accessToken = data.getString("access_token");
+
+                // Extract user_id if available
+                if (data.has("user_id") && (this.userId == null || this.userId.isEmpty())) {
+                    this.userId = data.getString("user_id");
+                }
+
+                LOGGER.info("Generated access token using HTTP API");
+            } else {
+                throw new IOException("Invalid response format: missing 'data' field");
+            }
+        } else {
+            throw new IOException("API request failed: HTTP " + response.statusCode() + " - " + response.body());
         }
     }
 

@@ -72,14 +72,19 @@ public class TradingService {
         }
 
         try {
-            LOGGER.info("Placing " + orderType + " order for " + quantity + " of " +
-                    instrument.getTradingSymbol() + " at price " +
-                    (price != null ? price.toString() : "MARKET"));
+            // Calculate the actual quantity based on lot size
+            int lotSize = instrument.getLotSize();
+            int actualQuantity = quantity * lotSize;
+
+            LOGGER.info("Placing " + orderType + " order for " + quantity + " lots (" +
+                    actualQuantity + " quantity) of " + instrument.getTradingSymbol() +
+                    " at price " + (price != null ? price.toString() : "MARKET") +
+                    " (lot size: " + lotSize + ")");
 
             boolean isBuy = (orderType == OrderType.BUY);
             String orderId = tradingApiClient.placeOrder(
                     instrument.getInstrumentId(),
-                    quantity,
+                    actualQuantity,
                     price,
                     isBuy);
 
@@ -90,7 +95,7 @@ public class TradingService {
                 eventBus.publishAsync(new OrderPlacedEvent(
                         orderId,
                         instrument,
-                        quantity,
+                        quantity, // Store the original lot count, not the calculated quantity
                         price,
                         orderType,
                         tag));

@@ -126,12 +126,32 @@ public class OrderRepository {
         OrderStatus oldStatus = order.getStatus();
         order.setStatus(newStatus);
 
-        LOGGER.info("Updated order " + orderId + " status: " + oldStatus + " -> " + newStatus);
+        // Log status change with highly visible markers for important changes
+        String logMessage = "Updated order " + orderId + " status: " + oldStatus + " -> " + newStatus;
+        if (newStatus == OrderStatus.FAILED) {
+            logMessage = "!!!ORDER FAILED!!! " + logMessage;
+            LOGGER.severe(logMessage);
+        } else if (newStatus == OrderStatus.COMPLETED) {
+            logMessage = "***ORDER COMPLETED*** " + logMessage;
+            LOGGER.info(logMessage);
+        } else {
+            LOGGER.info(logMessage);
+        }
 
-        // Publish event (you would create this class)
-        eventBus.publishAsync(new OrderStatusChangedEvent(orderId, oldStatus, newStatus));
+        try {
+            // Force print to standard output as well for visibility
+            System.out.println("[STATUS] " + logMessage);
 
-        return true;
+            // Publish event (you would create this class)
+            eventBus.publishAsync(new OrderStatusChangedEvent(orderId, oldStatus, newStatus));
+            LOGGER.info("Published OrderStatusChangedEvent for order: " + orderId);
+
+            return true;
+        } catch (Exception e) {
+            LOGGER.severe("Error publishing status change event: " + e.getMessage());
+            e.printStackTrace();
+            return false;
+        }
     }
 
     /**

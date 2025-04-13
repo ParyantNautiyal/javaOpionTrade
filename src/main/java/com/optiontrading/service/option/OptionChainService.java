@@ -55,6 +55,14 @@ public class OptionChainService implements MarketDataSubscriber {
     // Thread pool for analysis operations
     private ExecutorService analysisExecutor;
 
+    // Add timestamp tracking for debouncing
+    private volatile long lastUpdateTime = 0;
+    private static final long UPDATE_INTERVAL_MS = 2000; // 2 seconds
+
+    // Add price change tracking for early return
+    private Map<String, BigDecimal> lastProcessedPrices = new ConcurrentHashMap<>();
+    private static final BigDecimal SIGNIFICANT_PRICE_CHANGE_THRESHOLD = new BigDecimal("0.05"); // 0.05%
+
     /**
      * Create a new option chain service instance with dependency injection
      */
@@ -129,19 +137,30 @@ public class OptionChainService implements MarketDataSubscriber {
 
     /**
      * Determine if we should update the best pair calculation
-     * This implements a simple debounce strategy
+     * This implements a time-based debouncing strategy
      */
     private boolean shouldUpdateBestPair() {
-        // This is a simple implementation that updates roughly once every 10 price
-        // updates
-        // In a real system, this would be more sophisticated
-        return Math.random() < 0.1;
+        long currentTime = System.currentTimeMillis();
+        long timeSinceLastUpdate = currentTime - lastUpdateTime;
+
+        // Only update if enough time has passed since last update
+        if (timeSinceLastUpdate >= UPDATE_INTERVAL_MS) {
+            lastUpdateTime = currentTime;
+            return true;
+        }
+
+        return false;
     }
 
     /**
      * Update the best option pair based on current prices
      */
     private void updateBestOptionPair() {
+        // Check if prices have changed significantly before proceeding
+        if (!havePricesChangedSignificantly()) {
+            return;
+        }
+
         // Run in a background thread to avoid blocking
         analysisExecutor.submit(() -> {
             try {
@@ -154,14 +173,74 @@ public class OptionChainService implements MarketDataSubscriber {
                     LOGGER.info("Updated best option pair for order " + orderId +
                             " from " + oldBestPair + " to " + newBestPair);
 
-                    // Publish event with updated best pair
-                    eventBus.publishAsync(new BestOptionsUpdatedEvent(orderId,
-                            Collections.singletonList(newBestPair)));
+                    // Publish event immediately in a synchronous manner to ensure delivery
+                    try {
+                        eventBus.publish(new BestOptionsUpdatedEvent(orderId,
+                                Collections.singletonList(newBestPair)));
+                        LOGGER.info("Successfully published BestOptionsUpdatedEvent synchronously");
+                    } catch (Exception e) {
+                        LOGGER.severe("Error publishing BestOptionsUpdatedEvent: " + e.getMessage());
+                        e.printStackTrace();
+                    }
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "Error updating best option pair", e);
             }
         });
+    }
+
+    /**
+     * Check if any prices have changed significantly since the last update
+     * 
+     * @return true if prices have changed significantly
+     */
+    private boolean havePricesChangedSignificantly() {
+        boolean hasChanges = false;
+
+        // If no previous prices, consider it changed
+        if (lastProcessedPrices.isEmpty()) {
+            // Save current prices as the last processed
+            lastProcessedPrices.putAll(currentPrices);
+            return true;
+        }
+
+        // Check for new instruments or significant price changes
+        for (Map.Entry<String, BigDecimal> entry : currentPrices.entrySet()) {
+            String instrumentId = entry.getKey();
+            BigDecimal currentPrice = entry.getValue();
+
+            // If this is a new instrument or price has changed significantly
+            if (!lastProcessedPrices.containsKey(instrumentId) ||
+                    hasSignificantPriceChange(lastProcessedPrices.get(instrumentId), currentPrice)) {
+                hasChanges = true;
+                break;
+            }
+        }
+
+        // If changes were detected, update the last processed prices
+        if (hasChanges) {
+            lastProcessedPrices.clear();
+            lastProcessedPrices.putAll(currentPrices);
+        }
+
+        return hasChanges;
+    }
+
+    /**
+     * Check if the price change is significant
+     * 
+     * @param oldPrice the old price
+     * @param newPrice the new price
+     * @return true if the change is significant
+     */
+    private boolean hasSignificantPriceChange(BigDecimal oldPrice, BigDecimal newPrice) {
+        if (oldPrice == null || newPrice == null) {
+            return true;
+        }
+
+        // Calculate percentage change
+        BigDecimal change = percentageDifference(oldPrice, newPrice).abs();
+        return change.compareTo(SIGNIFICANT_PRICE_CHANGE_THRESHOLD) > 0;
     }
 
     /**
@@ -172,8 +251,15 @@ public class OptionChainService implements MarketDataSubscriber {
     private OptionPair findBestOptionPair() {
         // If we don't have enough data, return null or the current best pair
         if (currentPrices.isEmpty() || monitoredInstruments.isEmpty()) {
+            LOGGER.warning("Cannot find best pair: insufficient data - prices: " +
+                    currentPrices.size() + ", instruments: " + monitoredInstruments.size());
             return currentBestPair;
         }
+
+        LOGGER.info("Finding best option pair for order " + orderId +
+                " with target premium " + targetPremium +
+                " - monitoring " + monitoredInstruments.size() + " instruments with " +
+                currentPrices.size() + " price points");
 
         // Filter call options
         List<Instrument> callOptions = monitoredInstruments.values().stream()
@@ -185,42 +271,73 @@ public class OptionChainService implements MarketDataSubscriber {
                 .filter(Instrument::isPut)
                 .collect(Collectors.toList());
 
-        // Find the best option pair
-        OptionPair bestPair = null;
-        BigDecimal minDifference = BigDecimal.valueOf(Double.MAX_VALUE);
+        LOGGER.info("Available options: " + callOptions.size() + " calls, " + putOptions.size() + " puts");
 
-        // For each call option
+        // Find best call option (closest to target premium)
+        Instrument bestCallOption = null;
+        BigDecimal bestCallPrice = null;
+        BigDecimal minCallDifference = BigDecimal.valueOf(Double.MAX_VALUE);
+
         for (Instrument callOption : callOptions) {
             String callId = callOption.getInstrumentId();
             BigDecimal callPrice = currentPrices.get(callId);
 
-            if (callPrice == null)
+            if (callPrice == null) {
+                LOGGER.fine("No price available for call " + callOption.getTradingSymbol());
                 continue;
+            }
 
-            // Find matching put option with same strike
-            for (Instrument putOption : putOptions) {
-                // Match strike prices
-                if (putOption.getStrikePrice().compareTo(callOption.getStrikePrice()) != 0) {
-                    continue;
-                }
-
-                String putId = putOption.getInstrumentId();
-                BigDecimal putPrice = currentPrices.get(putId);
-
-                if (putPrice == null)
-                    continue;
-
-                // Calculate how close these options are to our target premium
-                OptionPair pair = new OptionPair(callOption, callPrice, putOption, putPrice);
-                BigDecimal difference = pair.getPremiumDifference(targetPremium);
-
-                // If this is better than our current best, update
-                if (difference.compareTo(minDifference) < 0) {
-                    minDifference = difference;
-                    bestPair = pair;
-                }
+            BigDecimal difference = callPrice.subtract(targetPremium).abs();
+            if (difference.compareTo(minCallDifference) < 0) {
+                minCallDifference = difference;
+                bestCallOption = callOption;
+                bestCallPrice = callPrice;
             }
         }
+
+        // Find best put option (closest to target premium)
+        Instrument bestPutOption = null;
+        BigDecimal bestPutPrice = null;
+        BigDecimal minPutDifference = BigDecimal.valueOf(Double.MAX_VALUE);
+
+        for (Instrument putOption : putOptions) {
+            String putId = putOption.getInstrumentId();
+            BigDecimal putPrice = currentPrices.get(putId);
+
+            if (putPrice == null) {
+                LOGGER.fine("No price available for put " + putOption.getTradingSymbol());
+                continue;
+            }
+
+            BigDecimal difference = putPrice.subtract(targetPremium).abs();
+            if (difference.compareTo(minPutDifference) < 0) {
+                minPutDifference = difference;
+                bestPutOption = putOption;
+                bestPutPrice = putPrice;
+            }
+        }
+
+        // Create option pair with the best individual options
+        OptionPair bestPair = null;
+        if (bestCallOption != null && bestPutOption != null) {
+            bestPair = new OptionPair(bestCallOption, bestCallPrice, bestPutOption, bestPutPrice);
+
+            LOGGER.info("Best call option: " + bestCallOption.getTradingSymbol() + "@" + bestCallPrice +
+                    " (diff: " + minCallDifference + ")");
+            LOGGER.info("Best put option: " + bestPutOption.getTradingSymbol() + "@" + bestPutPrice +
+                    " (diff: " + minPutDifference + ")");
+
+            LOGGER.info("Best option pair found: " +
+                    bestPair.getCallOption().getTradingSymbol() + "@" + bestPair.getCallPrice() +
+                    " / " + bestPair.getPutOption().getTradingSymbol() + "@" + bestPair.getPutPrice());
+        } else {
+            LOGGER.warning("Could not find any suitable option pair for order " + orderId);
+        }
+
+        LOGGER.info("Best option search completed - best call difference: " +
+                (bestCallOption != null ? minCallDifference : "N/A") +
+                ", best put difference: " +
+                (bestPutOption != null ? minPutDifference : "N/A"));
 
         return bestPair;
     }

@@ -123,7 +123,7 @@ public class OrderEntryUI extends JFrame {
 
         // Price field
         formPanel.add(new JLabel("Price (or 0 for market):"));
-        priceField = new JTextField("0");
+        priceField = new JTextField("500");
         formPanel.add(priceField);
 
         // Execute at time spinner
@@ -329,7 +329,7 @@ public class OrderEntryUI extends JFrame {
 
             // Clear form
             quantityField.setText("1");
-            priceField.setText("0");
+            priceField.setText("500");
 
         } catch (Exception e) {
             JOptionPane.showMessageDialog(this,
