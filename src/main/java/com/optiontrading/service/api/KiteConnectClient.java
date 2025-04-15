@@ -848,4 +848,136 @@ public class KiteConnectClient implements TradingApiClient {
     public static class AuthenticationRequiredEvent extends com.optiontrading.events.Event {
         // Event with no additional data
     }
+
+    /**
+     * Get all orders from Kite API
+     * 
+     * @return List of order objects containing status information
+     */
+    public List<Map<String, Object>> getOrders() {
+        LOGGER.info("Fetching orders from Kite API");
+
+        try {
+            // Use Kite Connect library to get orders
+            List<com.zerodhatech.models.Order> kiteOrders = kiteClient.getOrders();
+
+            // Convert to a simpler map representation
+            List<Map<String, Object>> orders = new ArrayList<>();
+
+            for (com.zerodhatech.models.Order kiteOrder : kiteOrders) {
+                Map<String, Object> order = new HashMap<>();
+
+                try {
+                    // Use reflection to safely get fields
+                    order.put("orderId", getFieldValueSafely(kiteOrder, "orderId"));
+
+                    // For trading symbol, try both lowercase and camelcase
+                    Object tradingSymbol = getFieldValueSafely(kiteOrder, "tradingsymbol");
+                    if (tradingSymbol == null) {
+                        tradingSymbol = getFieldValueSafely(kiteOrder, "tradingSymbol");
+                    }
+                    order.put("tradingSymbol", tradingSymbol);
+
+                    order.put("exchange", getFieldValueSafely(kiteOrder, "exchange"));
+                    order.put("transactionType", getFieldValueSafely(kiteOrder, "transactionType"));
+                    order.put("orderType", getFieldValueSafely(kiteOrder, "orderType"));
+                    order.put("status", getFieldValueSafely(kiteOrder, "status"));
+                    order.put("price", getFieldValueSafely(kiteOrder, "price"));
+                    order.put("quantity", getFieldValueSafely(kiteOrder, "quantity"));
+                    order.put("product", getFieldValueSafely(kiteOrder, "product"));
+                    order.put("timestamp", getFieldValueSafely(kiteOrder, "orderTimestamp"));
+
+                    orders.add(order);
+                } catch (Exception e) {
+                    LOGGER.warning("Error processing order data: " + e.getMessage());
+                }
+            }
+
+            LOGGER.info("Fetched " + orders.size() + " orders from Kite API");
+            return orders;
+        } catch (KiteException e) {
+            LOGGER.log(Level.SEVERE, "Kite API error fetching orders: " + e.message, e);
+
+            // Handle authentication error
+            if (isAuthenticationError(e)) {
+                LOGGER.severe("Authentication issue detected while fetching orders");
+                handleAuthenticationError();
+            }
+
+            return new ArrayList<>();
+        } catch (IOException e) {
+            LOGGER.log(Level.SEVERE, "Network error fetching orders: " + e.getMessage(), e);
+            return new ArrayList<>();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error fetching orders: " + e.getMessage(), e);
+            return new ArrayList<>();
+        }
+    }
+
+    /**
+     * Get an order's current status from Kite API
+     * 
+     * @param orderId the Kite order ID to check
+     * @return the order status as a string, or null if not found
+     */
+    public String getOrderStatus(String orderId) {
+        if (orderId == null || orderId.isEmpty()) {
+            LOGGER.warning("Cannot get status for null or empty order ID");
+            return null;
+        }
+
+        LOGGER.info("Fetching status for order ID: " + orderId);
+
+        try {
+            List<Map<String, Object>> orders = getOrders();
+
+            // Find matching order
+            for (Map<String, Object> order : orders) {
+                if (orderId.equals(order.get("orderId"))) {
+                    String status = (String) order.get("status");
+                    LOGGER.info("Found status for order " + orderId + ": " + status);
+                    return status;
+                }
+            }
+
+            LOGGER.warning("Order ID " + orderId + " not found in Kite orders");
+            return null;
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error getting order status: " + e.getMessage(), e);
+            return null;
+        }
+    }
+
+    /**
+     * Safely get a field value using reflection, with logging for debugging
+     */
+    private Object getFieldValueSafely(Object obj, String fieldName) {
+        try {
+            // First try direct field access
+            try {
+                java.lang.reflect.Field field = obj.getClass().getDeclaredField(fieldName);
+                field.setAccessible(true);
+                return field.get(obj);
+            } catch (NoSuchFieldException e) {
+                // Try getter method instead
+                String getterName = "get" + fieldName.substring(0, 1).toUpperCase() + fieldName.substring(1);
+                try {
+                    java.lang.reflect.Method getter = obj.getClass().getMethod(getterName);
+                    return getter.invoke(obj);
+                } catch (NoSuchMethodException me) {
+                    // Log available field names for debugging
+                    if (fieldName.equals("tradingsymbol") || fieldName.equals("tradingSymbol")) {
+                        LOGGER.info("Available fields in " + obj.getClass().getName() + ":");
+                        for (java.lang.reflect.Field f : obj.getClass().getDeclaredFields()) {
+                            LOGGER.info("  - " + f.getName());
+                        }
+                    }
+                    return null;
+                }
+            }
+        } catch (Exception e) {
+            LOGGER.fine("Could not access field '" + fieldName + "': " + e.getMessage());
+            return null;
+        }
+    }
 }

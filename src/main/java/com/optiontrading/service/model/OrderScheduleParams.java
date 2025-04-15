@@ -20,15 +20,20 @@ public class OrderScheduleParams {
     private final boolean stopLossEnabled;
     private final boolean moveSlToCost;
     private final boolean trailingSl;
+    private final BigDecimal stopLossPercentage; // Custom stop loss percentage
+    private final BigDecimal trailingDistance; // Custom trailing distance
     private final LocalDateTime executionTime;
 
     // Configuration keys
     private static final String DEFAULT_STOP_LOSS_PERCENT_KEY = "trading.default.stop.loss.percentage";
     private static final String DEFAULT_HEDGE_POINT_DIFF_KEY = "trading.default.hedge.point.difference";
+    private static final String DEFAULT_TRAILING_DISTANCE_KEY = "trading.default.trailing.distance";
 
     // Default values (used if configuration is not available)
     private static final double DEFAULT_THRESHOLD = 5.0;
     private static final int DEFAULT_HEDGE_POINT_DIFFERENCE = 1500;
+    private static final double DEFAULT_STOP_LOSS_PERCENTAGE = 5.0;
+    private static final double DEFAULT_TRAILING_DISTANCE = 0.5;
 
     private OrderScheduleParams(Builder builder) {
         this.indexSymbol = builder.indexSymbol;
@@ -42,6 +47,8 @@ public class OrderScheduleParams {
         this.stopLossEnabled = builder.stopLossEnabled;
         this.moveSlToCost = builder.moveSlToCost;
         this.trailingSl = builder.trailingSl;
+        this.stopLossPercentage = builder.stopLossPercentage;
+        this.trailingDistance = builder.trailingDistance;
         this.executionTime = builder.executionTime;
     }
 
@@ -89,6 +96,14 @@ public class OrderScheduleParams {
         return trailingSl;
     }
 
+    public BigDecimal getStopLossPercentage() {
+        return stopLossPercentage;
+    }
+
+    public BigDecimal getTrailingDistance() {
+        return trailingDistance;
+    }
+
     public LocalDateTime getExecutionTime() {
         return executionTime;
     }
@@ -109,13 +124,19 @@ public class OrderScheduleParams {
         if (configManager != null) {
             // Get default stop loss percentage from configuration
             double defaultStopLossPercent = configManager.getDouble(
-                    DEFAULT_STOP_LOSS_PERCENT_KEY, DEFAULT_THRESHOLD);
+                    DEFAULT_STOP_LOSS_PERCENT_KEY, DEFAULT_STOP_LOSS_PERCENTAGE);
             builder.threshold(defaultStopLossPercent);
+            builder.stopLossPercentage(new BigDecimal(defaultStopLossPercent));
 
             // Get default hedge point difference from configuration
             int defaultHedgePointDiff = configManager.getInt(
                     DEFAULT_HEDGE_POINT_DIFF_KEY, DEFAULT_HEDGE_POINT_DIFFERENCE);
             builder.hedgePointDifference(defaultHedgePointDiff);
+
+            // Get default trailing distance from configuration
+            double defaultTrailingDistance = configManager.getDouble(
+                    DEFAULT_TRAILING_DISTANCE_KEY, DEFAULT_TRAILING_DISTANCE);
+            builder.trailingDistance(new BigDecimal(defaultTrailingDistance));
         }
 
         return builder;
@@ -133,6 +154,10 @@ public class OrderScheduleParams {
                 ", hedgingEnabled=" + hedgingEnabled +
                 ", hedgePointDifference=" + hedgePointDifference +
                 ", stopLossEnabled=" + stopLossEnabled +
+                ", moveSlToCost=" + moveSlToCost +
+                ", trailingSl=" + trailingSl +
+                ", stopLossPercentage=" + stopLossPercentage +
+                ", trailingDistance=" + trailingDistance +
                 ", executionTime=" + executionTime +
                 '}';
     }
@@ -149,6 +174,8 @@ public class OrderScheduleParams {
         private boolean stopLossEnabled = false;
         private boolean moveSlToCost = false;
         private boolean trailingSl = false;
+        private BigDecimal stopLossPercentage = new BigDecimal(DEFAULT_STOP_LOSS_PERCENTAGE);
+        private BigDecimal trailingDistance = new BigDecimal(DEFAULT_TRAILING_DISTANCE);
         private LocalDateTime executionTime;
 
         public Builder indexSymbol(String indexSymbol) {
@@ -203,6 +230,16 @@ public class OrderScheduleParams {
 
         public Builder trailingSl(boolean trailingSl) {
             this.trailingSl = trailingSl;
+            return this;
+        }
+
+        public Builder stopLossPercentage(BigDecimal stopLossPercentage) {
+            this.stopLossPercentage = stopLossPercentage;
+            return this;
+        }
+
+        public Builder trailingDistance(BigDecimal trailingDistance) {
+            this.trailingDistance = trailingDistance;
             return this;
         }
 

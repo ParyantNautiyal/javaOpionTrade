@@ -12,5 +12,7 @@ public enum OrderStatus {
     EXECUTING, // T-0: Executing main orders
     COMPLETED, // All orders executed successfully
     CANCELLED, // Order was cancelled by user
-    FAILED // Execution failed
+    FAILED, // Execution failed
+    PENDING, // Order is placed but not yet completed/failed
+    UNKNOWN // Could not determine the current status
 }

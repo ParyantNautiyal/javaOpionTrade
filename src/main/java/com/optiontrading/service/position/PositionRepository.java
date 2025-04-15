@@ -19,6 +19,8 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import java.util.HashMap;
+import java.io.IOException;
 
 /**
  * Repository for persisting positions
@@ -30,6 +32,7 @@ public class PositionRepository {
     private static final String DATA_DIR = "data/positions";
     private static final String ACTIVE_POSITIONS_FILE = DATA_DIR + "/active_positions.dat";
     private static final String HISTORY_DIR = DATA_DIR + "/history";
+    private static final String CLOSED_POSITIONS_JSONL = DATA_DIR + "/closed_positions.jsonl";
 
     // Cache configuration
     private static final int CACHE_FLUSH_THRESHOLD = 15;
@@ -110,6 +113,8 @@ public class PositionRepository {
      * @return the removed position, or null if not found
      */
     public WatchedPosition removePosition(String positionId) {
+        LOGGER.warning("JSONL-DEBUG: Removing position: " + positionId);
+
         WatchedPosition position = positions.remove(positionId);
 
         if (position != null) {
@@ -119,12 +124,19 @@ public class PositionRepository {
 
             // Queue for history if it was active
             if (position.isActive()) {
+                LOGGER.warning("JSONL-DEBUG: Position was active, updating status to CLOSED: " + positionId);
                 position.updateStatus(PositionStatus.CLOSED, "Manually removed from repository");
+                positionsForHistory.add(position);
+            } else {
+                LOGGER.warning("JSONL-DEBUG: Position was already inactive: " + positionId);
                 positionsForHistory.add(position);
             }
 
             // Flush immediately on removal to prevent race conditions
+            LOGGER.warning("JSONL-DEBUG: Flushing cache after position removal: " + positionId);
             flushCache();
+        } else {
+            LOGGER.warning("JSONL-DEBUG: Position not found for removal: " + positionId);
         }
 
         return position;
@@ -207,23 +219,33 @@ public class PositionRepository {
      * Flush cache to disk
      */
     public synchronized void flushCache() {
+        LOGGER.warning("JSONL-DEBUG: Flush cache called with " + pendingChanges.get() + " changes and " +
+                positionsForHistory.size() + " positions for history");
+
         if (pendingChanges.get() > 0) {
-            LOGGER.fine("Flushing position cache with " + pendingChanges.get() + " pending changes");
+            LOGGER.warning("JSONL-DEBUG: Starting to flush position cache");
 
             // Save active positions file
             saveActivePositions();
 
             // Save any positions to history
+            int historyCount = 0;
             for (WatchedPosition position : positionsForHistory) {
+                LOGGER.warning("JSONL-DEBUG: Saving position to history: " + position.getId() +
+                        " (Status: " + position.getStatus() + ")");
                 saveToHistory(position);
+                historyCount++;
             }
+            LOGGER.warning("JSONL-DEBUG: Saved " + historyCount + " positions to history");
 
             // Clear caches
             modifiedPositionIds.clear();
             positionsForHistory.clear();
             pendingChanges.set(0);
 
-            LOGGER.fine("Cache flush complete");
+            LOGGER.warning("JSONL-DEBUG: Cache flush complete");
+        } else {
+            LOGGER.warning("JSONL-DEBUG: No changes to flush");
         }
     }
 
@@ -245,26 +267,149 @@ public class PositionRepository {
     }
 
     /**
+     * Export a closed position to JSONL file
+     * 
+     * @param position the closed position to export
+     */
+    private void exportClosedPositionToJsonl(WatchedPosition position) {
+        LOGGER.warning("JSONL-DEBUG: Starting export of position to JSONL: " + position.getId());
+
+        if (position == null) {
+            LOGGER.warning("JSONL-DEBUG: Position is null, cannot export");
+            return;
+        }
+
+        if (position.isActive()) {
+            LOGGER.warning("JSONL-DEBUG: Position " + position.getId() + " is still active, skipping JSONL export");
+            return;
+        }
+
+        try {
+            // Ensure data directory exists
+            File dataDir = new File(DATA_DIR);
+            if (!dataDir.exists()) {
+                LOGGER.warning("JSONL-DEBUG: Creating data directory: " + DATA_DIR);
+                boolean created = dataDir.mkdirs();
+                if (!created) {
+                    LOGGER.severe("JSONL-DEBUG: Failed to create data directory: " + DATA_DIR);
+                    return;
+                }
+            }
+
+            LOGGER.warning("JSONL-DEBUG: Creating position data for JSON: " + position.getId());
+
+            // Create JSON object with position data
+            Map<String, Object> positionData = new HashMap<>();
+            positionData.put("id", position.getId());
+
+            try {
+                if (position.getInstrument() != null) {
+                    positionData.put("symbol", position.getInstrument().getTradingSymbol());
+                } else {
+                    LOGGER.warning("JSONL-DEBUG: Position " + position.getId() + " has null instrument");
+                    positionData.put("symbol", "UNKNOWN");
+                }
+            } catch (Exception e) {
+                LOGGER.warning("JSONL-DEBUG: Error getting symbol: " + e.getMessage());
+                positionData.put("symbol", "ERROR");
+            }
+
+            positionData.put("orderType", position.getOrderType().toString());
+            positionData.put("quantity", position.getQuantity());
+            positionData.put("entryPrice", position.getEntryPrice());
+            positionData.put("entryTime", position.getEntryTime().toString());
+            positionData.put("exitPrice", position.getCurrentPrice());
+            positionData.put("exitTime", position.getStatusChangeTime().toString());
+            positionData.put("pnl", position.getPnl());
+            positionData.put("pnlPercent", position.getPnlPercent());
+            positionData.put("stopLoss", position.getStopLoss());
+            positionData.put("status", position.getStatus().toString());
+            positionData.put("reason", position.getStatusReason());
+
+            LOGGER.warning("JSONL-DEBUG: Converting to JSON string");
+
+            // Convert to JSON string - check if org.json library is available
+            String jsonLine;
+            try {
+                jsonLine = new org.json.JSONObject(positionData).toString() + "\n";
+                LOGGER.warning("JSONL-DEBUG: JSON conversion successful");
+            } catch (NoClassDefFoundError e) {
+                LOGGER.severe("JSONL-DEBUG: org.json library is missing! " + e.getMessage());
+                // Fallback to simple string representation
+                jsonLine = positionData.toString() + "\n";
+            }
+
+            // Create file path and ensure it's valid
+            File jsonlFile = new File(CLOSED_POSITIONS_JSONL);
+            LOGGER.warning("JSONL-DEBUG: Attempting to write to file: " + jsonlFile.getAbsolutePath());
+            boolean fileExists = jsonlFile.exists();
+
+            // Append to JSONL file
+            try (java.io.FileWriter writer = new java.io.FileWriter(jsonlFile, true)) {
+                writer.write(jsonLine);
+                LOGGER.warning("JSONL-DEBUG: Successfully wrote to JSONL file");
+            } catch (java.io.IOException e) {
+                LOGGER.severe("JSONL-DEBUG: I/O error writing to JSONL file: " + e.getMessage());
+                // Try to get more details about the file location
+                LOGGER.severe("JSONL-DEBUG: File absolute path: " + jsonlFile.getAbsolutePath());
+                LOGGER.severe("JSONL-DEBUG: Parent directory exists: "
+                        + (jsonlFile.getParentFile() != null && jsonlFile.getParentFile().exists()));
+                LOGGER.severe("JSONL-DEBUG: Can write to directory: "
+                        + (jsonlFile.getParentFile() != null && jsonlFile.getParentFile().canWrite()));
+            }
+
+            if (!fileExists) {
+                LOGGER.warning("JSONL-DEBUG: Created new closed positions JSONL file: " + CLOSED_POSITIONS_JSONL);
+            }
+
+            LOGGER.warning("JSONL-DEBUG: Completed export of position to JSONL: " + position.getId());
+        } catch (Exception e) {
+            LOGGER.severe("JSONL-DEBUG: Unexpected error exporting position to JSONL: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    /**
      * Save a position to the history directory
      * 
      * @param position the position to save
      */
     private void saveToHistory(WatchedPosition position) {
+        LOGGER.warning("JSONL-DEBUG: saveToHistory called for position: " + position.getId());
+
         try {
+            // Export to JSONL first
+            LOGGER.warning("JSONL-DEBUG: About to call exportClosedPositionToJsonl for: " + position.getId());
+            exportClosedPositionToJsonl(position);
+            LOGGER.warning("JSONL-DEBUG: exportClosedPositionToJsonl completed for: " + position.getId());
+
+            // Ensure history directory exists
+            File historyDir = new File(HISTORY_DIR);
+            if (!historyDir.exists()) {
+                LOGGER.warning("JSONL-DEBUG: Creating history directory: " + HISTORY_DIR);
+                historyDir.mkdirs();
+            }
+
             // Create a filename with position ID and timestamp
             String filename = String.format("%s_%s.dat",
                     position.getId(),
                     LocalDateTime.now().toString().replace(":", "-").replace(".", "-"));
 
             File historyFile = new File(HISTORY_DIR, filename);
+            LOGGER.warning("JSONL-DEBUG: Writing position to history file: " + historyFile.getPath());
 
             try (ObjectOutputStream oos = new ObjectOutputStream(new FileOutputStream(historyFile))) {
                 oos.writeObject(position);
+                LOGGER.warning("JSONL-DEBUG: Successfully wrote position to history file");
+            } catch (IOException e) {
+                LOGGER.severe("JSONL-DEBUG: I/O error writing to history file: " + e.getMessage());
             }
 
-            LOGGER.fine("Saved position to history: " + historyFile.getPath());
+            LOGGER.warning("JSONL-DEBUG: Completed saving position to history: " + historyFile.getPath());
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error saving position to history: " + position.getId(), e);
+            LOGGER.severe("JSONL-DEBUG: Error saving position to history: " + position.getId() + ", Error: "
+                    + e.getMessage());
+            e.printStackTrace();
         }
     }
 
@@ -315,6 +460,13 @@ public class PositionRepository {
             // Flush any pending changes
             flushCache();
 
+            // Export any remaining inactive positions to JSONL
+            for (WatchedPosition position : positions.values()) {
+                if (!position.isActive()) {
+                    exportClosedPositionToJsonl(position);
+                }
+            }
+
             // Shut down scheduler
             cacheFlushScheduler.shutdown();
             if (!cacheFlushScheduler.awaitTermination(5, TimeUnit.SECONDS)) {
@@ -325,5 +477,49 @@ public class PositionRepository {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error during PositionRepository shutdown", e);
         }
+    }
+
+    /**
+     * Get all closed positions from JSONL file
+     * 
+     * @return list of closed positions as Map objects
+     */
+    public List<Map<String, Object>> getClosedPositionsFromJsonl() {
+        List<Map<String, Object>> closedPositions = new ArrayList<>();
+
+        File jsonlFile = new File(CLOSED_POSITIONS_JSONL);
+        if (!jsonlFile.exists()) {
+            LOGGER.info("No closed positions JSONL file found");
+            return closedPositions;
+        }
+
+        try (java.io.BufferedReader reader = new java.io.BufferedReader(new java.io.FileReader(jsonlFile))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.trim().isEmpty()) {
+                    continue;
+                }
+
+                try {
+                    // Parse JSON to Map
+                    org.json.JSONObject json = new org.json.JSONObject(line);
+                    Map<String, Object> position = new HashMap<>();
+
+                    for (String key : json.keySet()) {
+                        position.put(key, json.get(key));
+                    }
+
+                    closedPositions.add(position);
+                } catch (Exception e) {
+                    LOGGER.warning("Error parsing JSON line: " + e.getMessage());
+                }
+            }
+
+            LOGGER.info("Loaded " + closedPositions.size() + " closed positions from JSONL");
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error reading closed positions JSONL: " + e.getMessage(), e);
+        }
+
+        return closedPositions;
     }
 }

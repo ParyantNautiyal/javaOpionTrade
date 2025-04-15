@@ -45,6 +45,7 @@ D:\OptionTrading\src\main\java\com\optiontrading\service\trading\TradingService.
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\HedgeOrdersPlacedEvent.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderLoggerService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\auth\AuthService.java
+D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderStatusService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\position\PositionEvent.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderCleanupEvent.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\MainOrderPlacedEvent.java

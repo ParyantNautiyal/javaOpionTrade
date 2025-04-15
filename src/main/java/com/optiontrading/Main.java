@@ -582,12 +582,37 @@ public class Main {
             // Only ask about SL options if SL is enabled
             boolean moveSlToCost = false;
             boolean trailingSl = false;
+            BigDecimal stopLossPercentage = new BigDecimal("5.0"); // Default
+            BigDecimal trailingDistance = new BigDecimal("0.5"); // Default
+
             if (stopLossEnabled) {
+                System.out.print("Enter Stop Loss Percentage (default 5.0): ");
+                String slPercentInput = scanner.nextLine().trim();
+                if (!slPercentInput.isEmpty()) {
+                    try {
+                        stopLossPercentage = new BigDecimal(slPercentInput);
+                    } catch (NumberFormatException e) {
+                        System.out.println("Invalid input, using default 5.0%");
+                    }
+                }
+
                 System.out.println("Move SL to cost when in profit? (y/n): ");
                 moveSlToCost = scanner.nextLine().trim().equalsIgnoreCase("y");
 
                 System.out.println("Enable trailing SL? (y/n): ");
                 trailingSl = scanner.nextLine().trim().equalsIgnoreCase("y");
+
+                if (trailingSl) {
+                    System.out.print("Enter Trailing Distance (default 0.5): ");
+                    String trailingDistInput = scanner.nextLine().trim();
+                    if (!trailingDistInput.isEmpty()) {
+                        try {
+                            trailingDistance = new BigDecimal(trailingDistInput);
+                        } catch (NumberFormatException e) {
+                            System.out.println("Invalid input, using default 0.5");
+                        }
+                    }
+                }
             }
 
             System.out.println("Enable Hedging? (y/n): ");
@@ -611,6 +636,8 @@ public class Main {
                     .stopLossEnabled(stopLossEnabled)
                     .moveSlToCost(moveSlToCost)
                     .trailingSl(trailingSl)
+                    .stopLossPercentage(stopLossPercentage)
+                    .trailingDistance(trailingDistance)
                     .hedgingEnabled(hedgingEnabled)
                     .hedgePointDifference(hedgePointDifference)
                     .build();
@@ -630,8 +657,12 @@ public class Main {
                     "Execution Time: " + executionDateTime.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss")));
             System.out.println("Stop Loss Enabled: " + stopLossEnabled);
             if (stopLossEnabled) {
+                System.out.println("Stop Loss Percentage: " + stopLossPercentage + "%");
                 System.out.println("Move SL to Cost: " + moveSlToCost);
                 System.out.println("Trailing SL: " + trailingSl);
+                if (trailingSl) {
+                    System.out.println("Trailing Distance: " + trailingDistance);
+                }
             }
             System.out.println("Hedging Enabled: " + hedgingEnabled);
             if (hedgingEnabled) {

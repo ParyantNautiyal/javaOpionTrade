@@ -99,6 +99,12 @@ public class MainOrderPlacedEventHandler {
         if (status != OrderStatus.COMPLETED) {
             LOGGER.warning("Not creating positions for order " + orderId +
                     " because status is " + status + ", not COMPLETED");
+
+            // TESTING ONLY: Uncomment the line below to bypass status check and create
+            // positions even for rejected orders
+            // status = OrderStatus.COMPLETED; // Force status to completed for testing -
+            // REMOVE IN PRODUCTION
+
             return;
         }
 
@@ -114,20 +120,31 @@ public class MainOrderPlacedEventHandler {
                 ", Quantity: " + quantity +
                 ", StopLoss: " + stopLossEnabled);
 
-        // Get configurable values
-        BigDecimal stopLossPercentage = configManager.getDouble(
-                DEFAULT_STOP_LOSS_PERCENT_KEY,
-                DEFAULT_STOP_LOSS_PERCENT.doubleValue()) > 0
-                        ? new BigDecimal(configManager.getDouble(DEFAULT_STOP_LOSS_PERCENT_KEY,
-                                DEFAULT_STOP_LOSS_PERCENT.doubleValue()))
-                        : DEFAULT_STOP_LOSS_PERCENT;
+        // Get stop loss percentage from order params or config
+        BigDecimal stopLossPercentage;
+        if (order.getParams().getStopLossPercentage() != null) {
+            stopLossPercentage = order.getParams().getStopLossPercentage();
+        } else {
+            stopLossPercentage = configManager.getDouble(
+                    DEFAULT_STOP_LOSS_PERCENT_KEY,
+                    DEFAULT_STOP_LOSS_PERCENT.doubleValue()) > 0
+                            ? new BigDecimal(configManager.getDouble(DEFAULT_STOP_LOSS_PERCENT_KEY,
+                                    DEFAULT_STOP_LOSS_PERCENT.doubleValue()))
+                            : DEFAULT_STOP_LOSS_PERCENT;
+        }
 
-        BigDecimal trailingDistance = configManager.getDouble(
-                DEFAULT_TRAILING_DISTANCE_KEY,
-                DEFAULT_TRAILING_DISTANCE.doubleValue()) > 0
-                        ? new BigDecimal(configManager.getDouble(DEFAULT_TRAILING_DISTANCE_KEY,
-                                DEFAULT_TRAILING_DISTANCE.doubleValue()))
-                        : DEFAULT_TRAILING_DISTANCE;
+        // Get trailing distance from order params or config
+        BigDecimal trailingDistance;
+        if (order.getParams().getTrailingDistance() != null) {
+            trailingDistance = order.getParams().getTrailingDistance();
+        } else {
+            trailingDistance = configManager.getDouble(
+                    DEFAULT_TRAILING_DISTANCE_KEY,
+                    DEFAULT_TRAILING_DISTANCE.doubleValue()) > 0
+                            ? new BigDecimal(configManager.getDouble(DEFAULT_TRAILING_DISTANCE_KEY,
+                                    DEFAULT_TRAILING_DISTANCE.doubleValue()))
+                            : DEFAULT_TRAILING_DISTANCE;
+        }
 
         LOGGER.info("Using stop loss percentage: " + stopLossPercentage +
                 ", trailing distance: " + trailingDistance);

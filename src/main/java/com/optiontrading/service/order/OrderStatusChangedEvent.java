@@ -4,23 +4,21 @@ import com.optiontrading.events.Event;
 import com.optiontrading.service.model.OrderStatus;
 
 /**
- * Event fired when an order's status changes
+ * Event published when an order's status changes
  */
 public class OrderStatusChangedEvent extends Event {
     private final String orderId;
-    private final OrderStatus oldStatus;
     private final OrderStatus newStatus;
 
     /**
-     * Create a new event
+     * Constructor
      * 
      * @param orderId   the order ID
-     * @param oldStatus the old status
      * @param newStatus the new status
      */
-    public OrderStatusChangedEvent(String orderId, OrderStatus oldStatus, OrderStatus newStatus) {
+    public OrderStatusChangedEvent(String orderId, OrderStatus newStatus) {
+        super();
         this.orderId = orderId;
-        this.oldStatus = oldStatus;
         this.newStatus = newStatus;
     }
 
@@ -31,15 +29,6 @@ public class OrderStatusChangedEvent extends Event {
      */
     public String getOrderId() {
         return orderId;
-    }
-
-    /**
-     * Get the old status
-     * 
-     * @return the old status
-     */
-    public OrderStatus getOldStatus() {
-        return oldStatus;
     }
 
     /**

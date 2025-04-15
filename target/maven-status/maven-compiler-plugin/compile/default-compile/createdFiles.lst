@@ -90,11 +90,13 @@ com\optiontrading\TestApplication.class
 com\optiontrading\ui\controller\PositionsController$4.class
 com\optiontrading\di\ApplicationContext.class
 com\optiontrading\service\order\OrderExecutionCoordinator.class
+com\optiontrading\service\order\OrderStatusService.class
 com\optiontrading\service\api\KiteConnectClient.class
 com\optiontrading\service\option\OptionChainService.class
 com\optiontrading\service\order\MainOrderPlacedEventHandler.class
 com\optiontrading\events\EventBus.class
 com\optiontrading\TestApplication$2.class
+com\optiontrading\service\order\OrderStatusService$1.class
 com\optiontrading\di\AppModule.class
 com\optiontrading\Main$1.class
 com\optiontrading\service\order\OrderExecutionCoordinator$2.class

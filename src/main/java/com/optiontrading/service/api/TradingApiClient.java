@@ -59,4 +59,19 @@ public interface TradingApiClient {
      *         broker
      */
     Map<String, Object> getMargins();
+
+    /**
+     * Get all orders from the broker
+     * 
+     * @return List of order objects containing status information
+     */
+    List<Map<String, Object>> getOrders();
+
+    /**
+     * Get an order's current status from the broker
+     * 
+     * @param orderId the order ID to check
+     * @return the order status as a string, or null if not found
+     */
+    String getOrderStatus(String orderId);
 }

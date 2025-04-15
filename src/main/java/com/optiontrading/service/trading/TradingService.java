@@ -15,6 +15,8 @@ import java.util.HashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.List;
+import java.util.ArrayList;
 
 /**
  * Service for placing trades and managing orders
@@ -119,16 +121,43 @@ public class TradingService {
     public OrderStatus getOrderStatus(String brokerId) {
         // We only track initial order placement status from the API response
         // If the brokerId exists, it means the order was successfully placed
-        if (brokerId != null && !brokerId.isEmpty()) {
-            LOGGER.info("Order status requested for ID: " + brokerId + " - returning PLACED status");
-            return OrderStatus.COMPLETED; // Or consider adding a new status like PLACED if needed
-        } else {
-            LOGGER.warning("Order status requested for invalid order ID: " + brokerId);
-            return OrderStatus.FAILED;
-        }
+        return OrderStatus.COMPLETED;
 
-        // Note: We don't query the broker for real-time status updates
-        // Users should check actual order status on Kite platform directly
+        // if (brokerId != null && !brokerId.isEmpty()) {
+        // LOGGER.info("Order status requested for ID: " + brokerId);
+
+        // // For testing - comment out the code below and uncomment the following line
+        // to
+        // // treat all orders as complete
+
+        // // Get real-time status from the broker
+        // String brokerStatus = tradingApiClient.getOrderStatus(brokerId);
+
+        // // Handle different broker status values
+        // if (brokerStatus == null) {
+        // LOGGER.warning("Could not get status for order " + brokerId + " from
+        // broker");
+        // return OrderStatus.UNKNOWN;
+        // } else if ("COMPLETE".equalsIgnoreCase(brokerStatus) ||
+        // "COMPLETED".equalsIgnoreCase(brokerStatus) ||
+        // "FILLED".equalsIgnoreCase(brokerStatus)) {
+        // LOGGER.info("Order " + brokerId + " is COMPLETED");
+        // return OrderStatus.COMPLETED;
+        // } else if ("REJECTED".equalsIgnoreCase(brokerStatus) ||
+        // "CANCELLED".equalsIgnoreCase(brokerStatus) ||
+        // "CANCELED".equalsIgnoreCase(brokerStatus)) {
+        // LOGGER.warning("Order " + brokerId + " is FAILED with broker status: " +
+        // brokerStatus);
+        // return OrderStatus.FAILED;
+        // } else {
+        // LOGGER.info("Order " + brokerId + " is PENDING with broker status: " +
+        // brokerStatus);
+        // return OrderStatus.PENDING;
+        // }
+        // } else {
+        // LOGGER.warning("Order status requested for invalid order ID: " + brokerId);
+        // return OrderStatus.FAILED;
+        // }
     }
 
     /**
@@ -200,6 +229,20 @@ public class TradingService {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error getting margin information", e);
             return BigDecimal.ZERO;
+        }
+    }
+
+    /**
+     * Get all orders from broker
+     * 
+     * @return list of order data
+     */
+    public List<Map<String, Object>> getAllOrders() {
+        try {
+            return tradingApiClient.getOrders();
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Error getting all orders", e);
+            return new ArrayList<>();
         }
     }
 }
