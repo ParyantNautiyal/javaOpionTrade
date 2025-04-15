@@ -19,6 +19,8 @@ import com.optiontrading.config.ConfigurationManager;
 import com.optiontrading.resources.ThreadManager;
 import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.position.PositionWatchlistService;
+import com.optiontrading.service.trading.OrderFailedEvent;
+import com.optiontrading.service.model.OrderType;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -37,6 +39,7 @@ import java.util.logging.Logger;
 import java.util.Set;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.stream.Collectors;
 
 /**
  * Coordinates the execution of scheduled orders
@@ -402,6 +405,44 @@ public class OrderExecutionCoordinator {
     }
 
     /**
+     * Find the option with strike price closest to the target strike
+     * 
+     * @param symbol       the underlying symbol
+     * @param expiryDate   the expiry date
+     * @param targetStrike the target strike price
+     * @param optionType   the option type (CALL or PUT)
+     * @return the option with closest strike price, or null if none found
+     */
+    private Instrument findClosestStrikeOption(
+            String symbol,
+            LocalDate expiryDate,
+            BigDecimal targetStrike,
+            OptionType optionType) {
+
+        // Get all instruments for this symbol and expiry
+        List<Instrument> allInstruments = instrumentService.loadInstrumentsForSymbolAndExpiry(
+                symbol, expiryDate);
+
+        // Filter by option type
+        List<Instrument> filteredOptions = allInstruments.stream()
+                .filter(i -> i.getOptionType() == optionType)
+                .collect(Collectors.toList());
+
+        if (filteredOptions.isEmpty()) {
+            return null;
+        }
+
+        // Find option with closest strike price
+        return filteredOptions.stream()
+                .min((a, b) -> {
+                    BigDecimal diffA = a.getStrikePrice().subtract(targetStrike).abs();
+                    BigDecimal diffB = b.getStrikePrice().subtract(targetStrike).abs();
+                    return diffA.compareTo(diffB);
+                })
+                .orElse(null);
+    }
+
+    /**
      * Execute hedge orders at T-10s
      * 
      * @param order the order to execute hedge orders for
@@ -457,6 +498,14 @@ public class OrderExecutionCoordinator {
 
             LOGGER.info("Calculated hedge strikes - Call: " + callHedgeStrike + ", Put: " + putHedgeStrike);
 
+            // Get opposite order type for hedging
+            OrderType hedgeOrderType = (order.getParams().getOrderType() == OrderType.BUY)
+                    ? OrderType.SELL
+                    : OrderType.BUY;
+
+            LOGGER.info("Using opposite order type for hedging: Main order=" +
+                    order.getParams().getOrderType() + ", Hedge order=" + hedgeOrderType);
+
             // Find hedge instruments for the calculated strikes
             List<Instrument> callHedgeOptions = instrumentService.findOptionsAtStrike(
                     callOption.getUnderlyingSymbol(),
@@ -464,23 +513,57 @@ public class OrderExecutionCoordinator {
                     callHedgeStrike,
                     OptionType.CALL);
 
+            // Fallback: If no options found at exact strike, find closest available strike
+            if (callHedgeOptions.isEmpty()) {
+                LOGGER.warning(
+                        "No hedge option found at strike " + callHedgeStrike + ", finding closest available strike");
+                Instrument closestCallOption = findClosestStrikeOption(
+                        callOption.getUnderlyingSymbol(),
+                        callOption.getExpiryDate(),
+                        callHedgeStrike,
+                        OptionType.CALL);
+
+                if (closestCallOption != null) {
+                    callHedgeOptions = Collections.singletonList(closestCallOption);
+                    LOGGER.info("Found closest call hedge option at strike " + closestCallOption.getStrikePrice() +
+                            " instead of target " + callHedgeStrike);
+                }
+            }
+
             List<Instrument> putHedgeOptions = instrumentService.findOptionsAtStrike(
                     putOption.getUnderlyingSymbol(),
                     putOption.getExpiryDate(),
                     putHedgeStrike,
                     OptionType.PUT);
 
+            // Fallback: If no options found at exact strike, find closest available strike
+            if (putHedgeOptions.isEmpty()) {
+                LOGGER.warning(
+                        "No hedge option found at strike " + putHedgeStrike + ", finding closest available strike");
+                Instrument closestPutOption = findClosestStrikeOption(
+                        putOption.getUnderlyingSymbol(),
+                        putOption.getExpiryDate(),
+                        putHedgeStrike,
+                        OptionType.PUT);
+
+                if (closestPutOption != null) {
+                    putHedgeOptions = Collections.singletonList(closestPutOption);
+                    LOGGER.info("Found closest put hedge option at strike " + closestPutOption.getStrikePrice() +
+                            " instead of target " + putHedgeStrike);
+                }
+            }
+
             // Place call hedge order
             if (!callHedgeOptions.isEmpty()) {
                 Instrument callHedgeOption = callHedgeOptions.get(0);
-                LOGGER.info("Placing call hedge order at strike " + callHedgeStrike +
+                LOGGER.info("Placing call hedge order at strike " + callHedgeOption.getStrikePrice() +
                         ": " + callHedgeOption.getTradingSymbol());
 
                 String brokerId = tradingService.placeOrder(
                         callHedgeOption,
                         order.getParams().getLots(),
-                        null, // Use market price
-                        order.getParams().getOrderType(),
+                        null, // Use MARKET price
+                        hedgeOrderType, // Use opposite order type for proper hedging
                         "HEDGE-" + orderId);
 
                 if (brokerId != null) {
@@ -489,7 +572,7 @@ public class OrderExecutionCoordinator {
                     LOGGER.warning("Failed to place call hedge order");
                 }
             } else {
-                LOGGER.warning("No hedge option found at strike " + callHedgeStrike);
+                LOGGER.warning("No suitable call hedge option found, even with fallback");
             }
 
             // Add 500ms delay between orders to respect API rate limits
@@ -503,14 +586,14 @@ public class OrderExecutionCoordinator {
             // Place put hedge order
             if (!putHedgeOptions.isEmpty()) {
                 Instrument putHedgeOption = putHedgeOptions.get(0);
-                LOGGER.info("Placing put hedge order at strike " + putHedgeStrike +
+                LOGGER.info("Placing put hedge order at strike " + putHedgeOption.getStrikePrice() +
                         ": " + putHedgeOption.getTradingSymbol());
 
                 String brokerId = tradingService.placeOrder(
                         putHedgeOption,
                         order.getParams().getLots(),
-                        null, // Use market price
-                        order.getParams().getOrderType(),
+                        null, // Use MARKET price
+                        hedgeOrderType, // Use opposite order type for proper hedging
                         "HEDGE-" + orderId);
 
                 if (brokerId != null) {
@@ -519,7 +602,7 @@ public class OrderExecutionCoordinator {
                     LOGGER.warning("Failed to place put hedge order");
                 }
             } else {
-                LOGGER.warning("No hedge option found at strike " + putHedgeStrike);
+                LOGGER.warning("No suitable put hedge option found, even with fallback");
             }
 
             // Update order status
@@ -591,6 +674,14 @@ public class OrderExecutionCoordinator {
                 LOGGER.warning("No best option pair found for order: " + orderId);
                 orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
                 cleanupOrder(orderId);
+
+                // Publish OrderFailedEvent
+                eventBus.publish(new OrderFailedEvent(
+                        orderId,
+                        "OrderExecutionCoordinator",
+                        order.getParams().getIndexSymbol(),
+                        order.getParams().getOrderType(),
+                        "No suitable option pair found for execution"));
                 return;
             }
 
@@ -615,7 +706,7 @@ public class OrderExecutionCoordinator {
                 callOrderId = tradingService.placeOrder(
                         callOption,
                         lots,
-                        callPrice, // Use the price from the option pair
+                        null, // Use MARKET price
                         orderType,
                         "MAIN-" + orderId);
 
@@ -623,6 +714,14 @@ public class OrderExecutionCoordinator {
                     LOGGER.info("Call option order placed successfully, broker ID: " + callOrderId);
                 } else {
                     LOGGER.warning("Failed to place call option order");
+
+                    // Publish OrderFailedEvent for call option
+                    eventBus.publish(new OrderFailedEvent(
+                            orderId,
+                            "OrderExecutionCoordinator",
+                            callOption.getTradingSymbol(),
+                            orderType,
+                            "Failed to place call option order"));
                 }
             } catch (RuntimeException e) {
                 // Specially handle market closed errors
@@ -630,8 +729,24 @@ public class OrderExecutionCoordinator {
                     LOGGER.severe("Market closed error detected during call option order placement: " + e.getMessage());
                     orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
                     cleanupOrder(orderId);
+
+                    // Publish OrderFailedEvent
+                    eventBus.publish(new OrderFailedEvent(
+                            orderId,
+                            "OrderExecutionCoordinator",
+                            callOption.getTradingSymbol(),
+                            orderType,
+                            "Market closed: " + e.getMessage()));
                     return;
                 }
+
+                // Publish OrderFailedEvent for other exceptions
+                eventBus.publish(new OrderFailedEvent(
+                        orderId,
+                        "OrderExecutionCoordinator",
+                        callOption.getTradingSymbol(),
+                        orderType,
+                        "Exception during call option order: " + e.getMessage()));
                 throw e; // Re-throw other exceptions
             }
 
@@ -654,7 +769,7 @@ public class OrderExecutionCoordinator {
                 putOrderId = tradingService.placeOrder(
                         putOption,
                         lots,
-                        putPrice, // Use the price from the option pair
+                        null, // Use MARKET price
                         orderType,
                         "MAIN-" + orderId);
 
@@ -662,6 +777,14 @@ public class OrderExecutionCoordinator {
                     LOGGER.info("Put option order placed successfully, broker ID: " + putOrderId);
                 } else {
                     LOGGER.warning("Failed to place put option order");
+
+                    // Publish OrderFailedEvent for put option
+                    eventBus.publish(new OrderFailedEvent(
+                            orderId,
+                            "OrderExecutionCoordinator",
+                            putOption.getTradingSymbol(),
+                            orderType,
+                            "Failed to place put option order"));
                 }
             } catch (RuntimeException e) {
                 // Specially handle market closed errors
@@ -669,8 +792,24 @@ public class OrderExecutionCoordinator {
                     LOGGER.severe("Market closed error detected during put option order placement: " + e.getMessage());
                     orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
                     cleanupOrder(orderId);
+
+                    // Publish OrderFailedEvent
+                    eventBus.publish(new OrderFailedEvent(
+                            orderId,
+                            "OrderExecutionCoordinator",
+                            putOption.getTradingSymbol(),
+                            orderType,
+                            "Market closed: " + e.getMessage()));
                     return;
                 }
+
+                // Publish OrderFailedEvent for other exceptions
+                eventBus.publish(new OrderFailedEvent(
+                        orderId,
+                        "OrderExecutionCoordinator",
+                        putOption.getTradingSymbol(),
+                        orderType,
+                        "Exception during put option order: " + e.getMessage()));
                 throw e; // Re-throw other exceptions
             }
 
@@ -679,9 +818,19 @@ public class OrderExecutionCoordinator {
             orderRepository.updateOrderStatus(orderId,
                     bothOrdersPlaced ? OrderStatus.COMPLETED : OrderStatus.FAILED);
 
-            // Only publish the event if the orders were successfully placed
-            if (bothOrdersPlaced) {
-                // Publish event - use synchronous publish to ensure immediate handling
+            // If orders failed, publish failure event
+            if (!bothOrdersPlaced) {
+                LOGGER.warning("Not publishing MainOrderPlacedEvent because one or both orders failed");
+
+                // Publish OrderFailedEvent
+                eventBus.publish(new OrderFailedEvent(
+                        orderId,
+                        "OrderExecutionCoordinator",
+                        order.getParams().getIndexSymbol(),
+                        orderType,
+                        "One or both options failed to place"));
+            } else {
+                // Only publish the event if the orders were successfully placed
                 // Check if we've already published an event for this order
                 if (!publishedMainOrderEvents.contains(orderId)) {
                     LOGGER.info("Publishing MainOrderPlacedEvent for order: " + orderId);
@@ -697,8 +846,6 @@ public class OrderExecutionCoordinator {
                 } else {
                     LOGGER.info("Skipped publishing duplicate MainOrderPlacedEvent for order: " + orderId);
                 }
-            } else {
-                LOGGER.warning("Not publishing MainOrderPlacedEvent because one or both orders failed");
             }
 
             // Clean up
@@ -707,6 +854,18 @@ public class OrderExecutionCoordinator {
             LOGGER.log(Level.SEVERE, "Error executing main order: " + orderId, e);
             orderRepository.updateOrderStatus(orderId, OrderStatus.FAILED);
             cleanupOrder(orderId);
+
+            // Publish OrderFailedEvent for unexpected exceptions
+            try {
+                eventBus.publish(new OrderFailedEvent(
+                        orderId,
+                        "OrderExecutionCoordinator",
+                        order.getParams().getIndexSymbol(),
+                        order.getParams().getOrderType(),
+                        "Unexpected error: " + e.getMessage()));
+            } catch (Exception ex) {
+                LOGGER.severe("Failed to publish OrderFailedEvent: " + ex.getMessage());
+            }
         } finally {
             // Always remove from currently executing set
             currentlyExecuting.remove(executionId);

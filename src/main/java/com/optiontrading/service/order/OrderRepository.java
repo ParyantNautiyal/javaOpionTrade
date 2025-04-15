@@ -178,8 +178,9 @@ public class OrderRepository {
 
         LOGGER.info("Deleted order: " + order);
 
-        // Log order deletion to dedicated file
-        orderLoggerService.logMessage(orderId, "ORDER DELETED - Order removed from the system");
+        // Record deletion in order history
+        String message = "ORDER DELETED - Order removed from the system";
+        orderLoggerService.logOrderCleanup(orderId, message);
 
         // Publish event
         eventBus.publishAsync(new OrderDeletedEvent(orderId));
@@ -196,10 +197,10 @@ public class OrderRepository {
     public void storePreFilteredInstruments(String orderId, List<Instrument> instruments) {
         preFilteredInstrumentsMap.put(orderId, instruments);
 
-        // Log to dedicated file
+        // Record pre-filtered instruments info in order history
         if (instruments != null) {
-            orderLoggerService.logMessage(orderId, "PRE-FILTERED INSTRUMENTS - Cached " +
-                    instruments.size() + " instruments for efficient option selection");
+            String message = "Cached " + instruments.size() + " instruments for efficient option selection";
+            orderLoggerService.logOrderCleanup(orderId, "PRE-FILTERED INSTRUMENTS - " + message);
         }
     }
 
@@ -221,7 +222,9 @@ public class OrderRepository {
     public void clearPreFilteredInstruments(String orderId) {
         preFilteredInstrumentsMap.remove(orderId);
         String details = "Removed pre-filtered instruments cache";
-        orderLoggerService.logMessage(orderId, "CLEANED UP - " + details);
+
+        // Add to order history
+        orderLoggerService.logOrderCleanup(orderId, details);
 
         // Publish OrderCleanupEvent
         eventBus.publishAsync(new OrderCleanupEvent(orderId, details));

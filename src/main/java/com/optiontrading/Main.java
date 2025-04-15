@@ -267,7 +267,8 @@ public class Main {
             System.out.println("5. Refresh Instruments (Download Latest)");
             System.out.println("6. Exit");
             System.out.println("7. Run System Test");
-            System.out.print("Enter your choice (1-7): ");
+            System.out.println("8. Open Positions Window (GUI)");
+            System.out.print("Enter your choice (1-8): ");
 
             try {
                 String input = scanner.nextLine().trim();
@@ -318,8 +319,13 @@ public class Main {
                         runSystemTest(scanner, appContext);
                         break;
 
+                    case 8:
+                        // Open Positions Window
+                        openPositionsWindow(appContext);
+                        break;
+
                     default:
-                        System.out.println("Invalid choice. Please enter a number between 1 and 7.");
+                        System.out.println("Invalid choice. Please enter a number between 1 and 8.");
                 }
             } catch (NumberFormatException e) {
                 System.out.println("Invalid input. Please enter a number.");
@@ -459,6 +465,8 @@ public class Main {
             System.out.println("1. NIFTY");
             System.out.println("2. BANKNIFTY");
             System.out.println("3. FINNIFTY");
+            System.out.println("4. SENSEX");
+            System.out.println("5. BANKEX");
             System.out.print("Enter selection: ");
             int indexSelection = Integer.parseInt(scanner.nextLine().trim());
 
@@ -472,6 +480,12 @@ public class Main {
                     break;
                 case 3:
                     selectedIndex = "FINNIFTY";
+                    break;
+                case 4:
+                    selectedIndex = "SENSEX";
+                    break;
+                case 5:
+                    selectedIndex = "BANKEX";
                     break;
                 default:
                     System.out.println("Invalid selection. Using NIFTY as default.");
@@ -565,6 +579,17 @@ public class Main {
             System.out.println("\nEnable Stop Loss? (y/n): ");
             boolean stopLossEnabled = scanner.nextLine().trim().equalsIgnoreCase("y");
 
+            // Only ask about SL options if SL is enabled
+            boolean moveSlToCost = false;
+            boolean trailingSl = false;
+            if (stopLossEnabled) {
+                System.out.println("Move SL to cost when in profit? (y/n): ");
+                moveSlToCost = scanner.nextLine().trim().equalsIgnoreCase("y");
+
+                System.out.println("Enable trailing SL? (y/n): ");
+                trailingSl = scanner.nextLine().trim().equalsIgnoreCase("y");
+            }
+
             System.out.println("Enable Hedging? (y/n): ");
             boolean hedgingEnabled = scanner.nextLine().trim().equalsIgnoreCase("y");
 
@@ -584,6 +609,8 @@ public class Main {
                     .executionTime(executionDateTime)
                     .orderType(selectedOrderType)
                     .stopLossEnabled(stopLossEnabled)
+                    .moveSlToCost(moveSlToCost)
+                    .trailingSl(trailingSl)
                     .hedgingEnabled(hedgingEnabled)
                     .hedgePointDifference(hedgePointDifference)
                     .build();
@@ -602,6 +629,10 @@ public class Main {
             System.out.println(
                     "Execution Time: " + executionDateTime.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss")));
             System.out.println("Stop Loss Enabled: " + stopLossEnabled);
+            if (stopLossEnabled) {
+                System.out.println("Move SL to Cost: " + moveSlToCost);
+                System.out.println("Trailing SL: " + trailingSl);
+            }
             System.out.println("Hedging Enabled: " + hedgingEnabled);
             if (hedgingEnabled) {
                 System.out.println("Hedge Point Difference: " + hedgePointDifference);
@@ -931,6 +962,26 @@ public class Main {
 
         public String getTestName() {
             return testName;
+        }
+    }
+
+    /**
+     * Open the Positions Window GUI
+     * 
+     * @param appContext the application context
+     */
+    private static void openPositionsWindow(ApplicationContext appContext) {
+        System.out.println("\n===== OPENING POSITIONS WINDOW =====");
+        System.out.println("Opening the graphical Positions Window...");
+
+        try {
+            // Use the utility class to open the positions window
+            com.optiontrading.ui.PositionsWindowOpener.openPositionsWindow(appContext);
+            System.out.println("Positions Window opened successfully!");
+            System.out.println("You can continue using the console menu while the window is open.");
+        } catch (Exception e) {
+            System.out.println("Error opening Positions Window: " + e.getMessage());
+            e.printStackTrace();
         }
     }
 }

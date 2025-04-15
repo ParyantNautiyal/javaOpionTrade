@@ -1,49 +1,63 @@
 package com.optiontrading.service.trading;
 
 import com.optiontrading.events.Event;
-import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OrderType;
 
 /**
- * Event published when an order placement fails
+ * Event that is published when an order fails
  */
 public class OrderFailedEvent extends Event {
-    private final String strategyId;
-    private final Instrument instrument;
+    private final String orderId;
+    private final String strategy;
+    private final String instrumentSymbol;
     private final OrderType orderType;
     private final String errorMessage;
 
     /**
-     * Create a new order failed event
+     * Constructor
      *
-     * @param strategyId   the strategy ID
-     * @param instrument   the instrument that failed to trade
-     * @param orderType    the order type (BUY/SELL)
-     * @param errorMessage the error message
+     * @param orderId          the order ID
+     * @param strategy         the strategy or component that encountered the
+     *                         failure
+     * @param instrumentSymbol the instrument symbol
+     * @param orderType        the order type
+     * @param errorMessage     the error message
      */
-    public OrderFailedEvent(String strategyId, Instrument instrument, OrderType orderType, String errorMessage) {
-        this.strategyId = strategyId;
-        this.instrument = instrument;
+    public OrderFailedEvent(String orderId, String strategy, String instrumentSymbol, OrderType orderType,
+            String errorMessage) {
+        super(); // Call Event constructor to initialize eventId and timestamp
+        this.orderId = orderId;
+        this.strategy = strategy;
+        this.instrumentSymbol = instrumentSymbol;
         this.orderType = orderType;
         this.errorMessage = errorMessage;
     }
 
     /**
-     * Get the strategy ID
+     * Get the order ID
      *
-     * @return the strategy ID
+     * @return the order ID
      */
-    public String getStrategyId() {
-        return strategyId;
+    public String getOrderId() {
+        return orderId;
     }
 
     /**
-     * Get the instrument
+     * Get the strategy
      *
-     * @return the instrument
+     * @return the strategy
      */
-    public Instrument getInstrument() {
-        return instrument;
+    public String getStrategy() {
+        return strategy;
+    }
+
+    /**
+     * Get the instrument symbol
+     *
+     * @return the instrument symbol
+     */
+    public String getInstrumentSymbol() {
+        return instrumentSymbol;
     }
 
     /**
@@ -62,5 +76,18 @@ public class OrderFailedEvent extends Event {
      */
     public String getErrorMessage() {
         return errorMessage;
+    }
+
+    @Override
+    public String toString() {
+        return "OrderFailedEvent{" +
+                "eventId='" + getEventId() + '\'' +
+                ", timestamp='" + getTimestamp() + '\'' +
+                ", orderId='" + orderId + '\'' +
+                ", strategy='" + strategy + '\'' +
+                ", instrumentSymbol='" + instrumentSymbol + '\'' +
+                ", orderType=" + orderType +
+                ", errorMessage='" + errorMessage + '\'' +
+                '}';
     }
 }

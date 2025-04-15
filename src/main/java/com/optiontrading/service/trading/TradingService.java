@@ -85,7 +85,7 @@ public class TradingService {
             String orderId = tradingApiClient.placeOrder(
                     instrument.getInstrumentId(),
                     actualQuantity,
-                    price,
+                    null, // Pass null for MARKET orders
                     isBuy);
 
             if (orderId != null) {

@@ -368,12 +368,21 @@ public class WatchedPosition implements Serializable {
     }
 
     /**
-     * Get the current price
+     * Get the current market price
      * 
-     * @return the current price
+     * @return the current market price
      */
-    public double getCurrentPrice() {
+    public double getCurrentPriceDouble() {
         return currentPrice;
+    }
+
+    /**
+     * Get the current market price as BigDecimal
+     * 
+     * @return the current market price
+     */
+    public BigDecimal getCurrentPrice() {
+        return BigDecimal.valueOf(currentPrice);
     }
 
     /**
@@ -392,6 +401,99 @@ public class WatchedPosition implements Serializable {
      */
     public String getPositionType() {
         return quantity > 0 ? "LONG" : "SHORT";
+    }
+
+    /**
+     * Check if this is a long position (BUY order)
+     * 
+     * @return true if this is a long position
+     */
+    public boolean isLongPosition() {
+        return orderType == OrderType.BUY;
+    }
+
+    /**
+     * Get the profit and loss amount as a BigDecimal
+     * 
+     * @return the profit and loss amount
+     */
+    public BigDecimal getPnl() {
+        double pnl = profitLoss;
+        return BigDecimal.valueOf(pnl);
+    }
+
+    /**
+     * Get the profit and loss percentage
+     * 
+     * @return the profit and loss percentage
+     */
+    public BigDecimal getPnlPercent() {
+        if (entryPrice.compareTo(BigDecimal.ZERO) == 0) {
+            return BigDecimal.ZERO;
+        }
+
+        double pnlPercent = (profitLoss / entryPriceDouble) * 100;
+        return BigDecimal.valueOf(pnlPercent);
+    }
+
+    /**
+     * Get the target price
+     * 
+     * @return the target price or null if not set
+     */
+    public BigDecimal getTarget() {
+        // For simple implementations, we can return null or calculate based on other
+        // fields
+        return null;
+    }
+
+    /**
+     * Get the stop loss price
+     * 
+     * @return the stop loss price
+     */
+    public BigDecimal getStopLoss() {
+        return currentStopPrice;
+    }
+
+    /**
+     * Check if stop loss has been moved to cost
+     * 
+     * @return true if stop loss has been moved to cost
+     */
+    public boolean isStopLossMovedToCost() {
+        return currentStopPrice != null && entryPrice.compareTo(currentStopPrice) == 0;
+    }
+
+    /**
+     * Check if trailing stop loss is enabled (alias for isTrailingStopLoss)
+     * 
+     * @return true if trailing stop loss is enabled
+     */
+    public boolean isTrailingSlEnabled() {
+        return isTrailingStopLoss();
+    }
+
+    /**
+     * Get the distance to stop loss
+     * 
+     * @return the distance to stop loss as a percentage or null if stop loss is not
+     *         set
+     */
+    public BigDecimal getDistanceToStopLoss() {
+        if (currentStopPrice == null || BigDecimal.valueOf(currentPrice).compareTo(BigDecimal.ZERO) == 0) {
+            return null;
+        }
+
+        BigDecimal current = BigDecimal.valueOf(currentPrice);
+        BigDecimal distance = current.subtract(currentStopPrice);
+
+        // For short positions, the logic is reversed
+        if (orderType == OrderType.SELL) {
+            distance = distance.negate();
+        }
+
+        return distance;
     }
 
     /**

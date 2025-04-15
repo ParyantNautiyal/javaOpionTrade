@@ -13,6 +13,7 @@ import com.optiontrading.service.position.PositionWatchlistService;
 import com.optiontrading.service.position.WatchedPosition;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import com.optiontrading.config.ConfigurationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -28,6 +29,14 @@ public class MainOrderPlacedEventHandler {
 
     private final PositionWatchlistService positionWatchlistService;
     private final OrderRepository orderRepository;
+    private final EventBus eventBus;
+    private final ConfigurationManager configManager;
+
+    // Default values
+    private static final String DEFAULT_STOP_LOSS_PERCENT_KEY = "trading.default.stop.loss.percentage";
+    private static final String DEFAULT_TRAILING_DISTANCE_KEY = "trading.default.trailing.distance";
+    private static final BigDecimal DEFAULT_STOP_LOSS_PERCENT = new BigDecimal("5.0");
+    private static final BigDecimal DEFAULT_TRAILING_DISTANCE = new BigDecimal("0.5");
 
     /**
      * Constructor with dependency injection
@@ -35,14 +44,18 @@ public class MainOrderPlacedEventHandler {
      * @param eventBus                 the event bus to subscribe to
      * @param positionWatchlistService the position watchlist service
      * @param orderRepository          the order repository
+     * @param configManager            the config manager
      */
     @Inject
     public MainOrderPlacedEventHandler(
             EventBus eventBus,
             PositionWatchlistService positionWatchlistService,
-            OrderRepository orderRepository) {
+            OrderRepository orderRepository,
+            ConfigurationManager configManager) {
         this.positionWatchlistService = positionWatchlistService;
         this.orderRepository = orderRepository;
+        this.eventBus = eventBus;
+        this.configManager = configManager;
 
         LOGGER.info("**** MainOrderPlacedEventHandler constructor called ****");
 
@@ -101,6 +114,24 @@ public class MainOrderPlacedEventHandler {
                 ", Quantity: " + quantity +
                 ", StopLoss: " + stopLossEnabled);
 
+        // Get configurable values
+        BigDecimal stopLossPercentage = configManager.getDouble(
+                DEFAULT_STOP_LOSS_PERCENT_KEY,
+                DEFAULT_STOP_LOSS_PERCENT.doubleValue()) > 0
+                        ? new BigDecimal(configManager.getDouble(DEFAULT_STOP_LOSS_PERCENT_KEY,
+                                DEFAULT_STOP_LOSS_PERCENT.doubleValue()))
+                        : DEFAULT_STOP_LOSS_PERCENT;
+
+        BigDecimal trailingDistance = configManager.getDouble(
+                DEFAULT_TRAILING_DISTANCE_KEY,
+                DEFAULT_TRAILING_DISTANCE.doubleValue()) > 0
+                        ? new BigDecimal(configManager.getDouble(DEFAULT_TRAILING_DISTANCE_KEY,
+                                DEFAULT_TRAILING_DISTANCE.doubleValue()))
+                        : DEFAULT_TRAILING_DISTANCE;
+
+        LOGGER.info("Using stop loss percentage: " + stopLossPercentage +
+                ", trailing distance: " + trailingDistance);
+
         // Add call option position
         Instrument callOption = optionPair.getCallOption();
         if (callOption != null) {
@@ -108,9 +139,6 @@ public class MainOrderPlacedEventHandler {
 
             // If stop loss is enabled, use the dedicated method for stop loss positions
             if (stopLossEnabled) {
-                // Default to 5% stop loss - this could come from a configuration
-                BigDecimal stopLossPercentage = new BigDecimal("5.0");
-
                 // Create position with stop loss
                 WatchedPosition callPosition = positionWatchlistService.addStopLossPosition(
                         callOption,
@@ -120,7 +148,7 @@ public class MainOrderPlacedEventHandler {
                         stopLossPercentage,
                         moveToBreakeven,
                         trailingStopLoss,
-                        new BigDecimal("0.5") // Default trailing distance, could be configurable
+                        trailingDistance // Use configurable trailing distance
                 );
 
                 if (callPosition != null) {
@@ -157,9 +185,6 @@ public class MainOrderPlacedEventHandler {
 
             // If stop loss is enabled, use the dedicated method for stop loss positions
             if (stopLossEnabled) {
-                // Default to 5% stop loss - this could come from a configuration
-                BigDecimal stopLossPercentage = new BigDecimal("5.0");
-
                 // Create position with stop loss
                 WatchedPosition putPosition = positionWatchlistService.addStopLossPosition(
                         putOption,
@@ -169,7 +194,7 @@ public class MainOrderPlacedEventHandler {
                         stopLossPercentage,
                         moveToBreakeven,
                         trailingStopLoss,
-                        new BigDecimal("0.5") // Default trailing distance, could be configurable
+                        trailingDistance // Use configurable trailing distance
                 );
 
                 if (putPosition != null) {
