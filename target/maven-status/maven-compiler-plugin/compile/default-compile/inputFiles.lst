@@ -35,6 +35,7 @@ D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderRepository.j
 D:\OptionTrading\src\main\java\com\optiontrading\ui\PositionViewModel.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\position\PositionSource.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\trading\OrderFailedEvent.java
+D:\OptionTrading\src\main\java\com\optiontrading\service\position\StopLossType.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\instrument\InstrumentService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\api\TradingApiClient.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\position\PositionAddedEvent.java

@@ -10,6 +10,7 @@ import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.position.PositionSource;
 import com.optiontrading.service.position.PositionStatus;
 import com.optiontrading.service.position.PositionWatchlistService;
+import com.optiontrading.service.position.StopLossType;
 import com.optiontrading.service.position.WatchedPosition;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
@@ -114,11 +115,16 @@ public class MainOrderPlacedEventHandler {
         boolean stopLossEnabled = order.getParams().isStopLossEnabled();
         boolean moveToBreakeven = order.getParams().isMoveSlToCost();
         boolean trailingStopLoss = order.getParams().isTrailingSl();
+        // Get stop loss type and trailing type from params
+        StopLossType stopLossType = order.getParams().getStopLossType();
+        StopLossType trailingType = order.getParams().getTrailingType();
 
         LOGGER.info("Adding positions for order " + orderId +
                 " - Type: " + orderType +
                 ", Quantity: " + quantity +
-                ", StopLoss: " + stopLossEnabled);
+                ", StopLoss: " + stopLossEnabled +
+                ", StopLossType: " + stopLossType +
+                ", TrailingType: " + trailingType);
 
         // Get stop loss percentage from order params or config
         BigDecimal stopLossPercentage;
@@ -165,8 +171,9 @@ public class MainOrderPlacedEventHandler {
                         stopLossPercentage,
                         moveToBreakeven,
                         trailingStopLoss,
-                        trailingDistance // Use configurable trailing distance
-                );
+                        trailingDistance,
+                        stopLossType,
+                        trailingType);
 
                 if (callPosition != null) {
                     LOGGER.info("Added call option position with stop loss to watchlist: " + callPosition);
@@ -211,8 +218,9 @@ public class MainOrderPlacedEventHandler {
                         stopLossPercentage,
                         moveToBreakeven,
                         trailingStopLoss,
-                        trailingDistance // Use configurable trailing distance
-                );
+                        trailingDistance,
+                        stopLossType,
+                        trailingType);
 
                 if (putPosition != null) {
                     LOGGER.info("Added put option position with stop loss to watchlist: " + putPosition);

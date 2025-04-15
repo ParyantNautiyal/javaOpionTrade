@@ -83,6 +83,7 @@ com\optiontrading\resources\ResourceMonitor.class
 com\optiontrading\ui\PositionsWindowOpener.class
 com\optiontrading\service\model\OrderScheduleParams$Builder.class
 com\optiontrading\Main$2.class
+com\optiontrading\service\position\StopLossType.class
 com\optiontrading\service\order\OrderExecutionCoordinator$3.class
 com\optiontrading\service\position\PositionWatchlistService.class
 com\optiontrading\service\model\Instrument.class

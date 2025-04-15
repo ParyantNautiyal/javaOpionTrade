@@ -4,6 +4,7 @@ import com.optiontrading.config.ConfigurationManager;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import com.optiontrading.service.position.StopLossType;
 
 /**
  * Parameters for scheduling an options order
@@ -22,6 +23,8 @@ public class OrderScheduleParams {
     private final boolean trailingSl;
     private final BigDecimal stopLossPercentage; // Custom stop loss percentage
     private final BigDecimal trailingDistance; // Custom trailing distance
+    private final StopLossType stopLossType; // Type of stop loss calculation
+    private final StopLossType trailingType; // Type of trailing stop calculation
     private final LocalDateTime executionTime;
 
     // Configuration keys
@@ -49,6 +52,8 @@ public class OrderScheduleParams {
         this.trailingSl = builder.trailingSl;
         this.stopLossPercentage = builder.stopLossPercentage;
         this.trailingDistance = builder.trailingDistance;
+        this.stopLossType = builder.stopLossType;
+        this.trailingType = builder.trailingType;
         this.executionTime = builder.executionTime;
     }
 
@@ -102,6 +107,14 @@ public class OrderScheduleParams {
 
     public BigDecimal getTrailingDistance() {
         return trailingDistance;
+    }
+
+    public StopLossType getStopLossType() {
+        return stopLossType;
+    }
+
+    public StopLossType getTrailingType() {
+        return trailingType;
     }
 
     public LocalDateTime getExecutionTime() {
@@ -158,6 +171,8 @@ public class OrderScheduleParams {
                 ", trailingSl=" + trailingSl +
                 ", stopLossPercentage=" + stopLossPercentage +
                 ", trailingDistance=" + trailingDistance +
+                ", stopLossType=" + stopLossType +
+                ", trailingType=" + trailingType +
                 ", executionTime=" + executionTime +
                 '}';
     }
@@ -176,6 +191,8 @@ public class OrderScheduleParams {
         private boolean trailingSl = false;
         private BigDecimal stopLossPercentage = new BigDecimal(DEFAULT_STOP_LOSS_PERCENTAGE);
         private BigDecimal trailingDistance = new BigDecimal(DEFAULT_TRAILING_DISTANCE);
+        private StopLossType stopLossType = StopLossType.PERCENTAGE; // Default to percentage
+        private StopLossType trailingType = StopLossType.POINTS; // Default to points
         private LocalDateTime executionTime;
 
         public Builder indexSymbol(String indexSymbol) {
@@ -243,6 +260,16 @@ public class OrderScheduleParams {
             return this;
         }
 
+        public Builder stopLossType(StopLossType stopLossType) {
+            this.stopLossType = stopLossType;
+            return this;
+        }
+
+        public Builder trailingType(StopLossType trailingType) {
+            this.trailingType = trailingType;
+            return this;
+        }
+
         public Builder executionTime(LocalDateTime executionTime) {
             this.executionTime = executionTime;
             return this;
@@ -251,5 +278,33 @@ public class OrderScheduleParams {
         public OrderScheduleParams build() {
             return new OrderScheduleParams(this);
         }
+    }
+
+    /**
+     * Create a builder from an existing params object
+     */
+    public static Builder builderFrom(OrderScheduleParams params) {
+        Builder builder = new Builder();
+
+        if (params != null) {
+            builder.indexSymbol(params.getIndexSymbol())
+                    .expiryDate(params.getExpiryDate())
+                    .threshold(params.getThreshold())
+                    .targetPremium(params.getTargetPremium())
+                    .lots(params.getLots())
+                    .orderType(params.getOrderType())
+                    .hedgingEnabled(params.isHedgingEnabled())
+                    .hedgePointDifference(params.getHedgePointDifference())
+                    .stopLossEnabled(params.isStopLossEnabled())
+                    .moveSlToCost(params.isMoveSlToCost())
+                    .trailingSl(params.isTrailingSl())
+                    .stopLossPercentage(params.getStopLossPercentage())
+                    .trailingDistance(params.getTrailingDistance())
+                    .stopLossType(params.getStopLossType())
+                    .trailingType(params.getTrailingType())
+                    .executionTime(params.getExecutionTime());
+        }
+
+        return builder;
     }
 }

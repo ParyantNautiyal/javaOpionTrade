@@ -249,6 +249,9 @@ public class OptionChainService implements MarketDataSubscriber {
      * @return the best option pair
      */
     private OptionPair findBestOptionPair() {
+        // Start timing
+        long startTime = System.currentTimeMillis();
+
         // If we don't have enough data, return null or the current best pair
         if (currentPrices.isEmpty() || monitoredInstruments.isEmpty()) {
             LOGGER.warning("Cannot find best pair: insufficient data - prices: " +
@@ -334,9 +337,13 @@ public class OptionChainService implements MarketDataSubscriber {
             LOGGER.warning("Could not find any suitable option pair for order " + orderId);
         }
 
-        LOGGER.info("Best option search completed - best call difference: " +
+        // End timing and log duration
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
+        // Use System.out.println instead of LOGGER
+        System.out.println("CALC_TIME: Best option search completed in " + duration + "ms - Call Diff: " +
                 (bestCallOption != null ? minCallDifference : "N/A") +
-                ", best put difference: " +
+                ", Put Diff: " +
                 (bestPutOption != null ? minPutDifference : "N/A"));
 
         return bestPair;

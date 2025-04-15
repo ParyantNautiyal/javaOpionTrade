@@ -240,13 +240,10 @@ public class PositionWatchlistService implements MarketDataSubscriber {
     }
 
     /**
-     * Create and add a new position with stop loss
+     * Add a stop loss position to the watchlist
      * 
-     * @param instrument         the instrument to trade
-     * @param orderType          the order type (BUY/SELL)
-     *                           For automated positions, this will execute the
-     *                           opposite order
-     *                           when the stop loss is triggered
+     * @param instrument         the instrument
+     * @param orderType          the order type
      * @param quantity           the quantity to trade
      * @param entryPrice         the current market price
      * @param stopLossPercentage the stop loss percentage
@@ -254,7 +251,72 @@ public class PositionWatchlistService implements MarketDataSubscriber {
      *                           profit
      * @param trailingStopLoss   whether to use a trailing stop
      * @param trailingDistance   the distance for trailing stop (percentage)
+     * @param stopLossType       the type of stop loss calculation (PERCENTAGE or
+     *                           POINTS)
+     * @param trailingType       the type of trailing stop calculation (PERCENTAGE
+     *                           or POINTS)
      * @return the created position
+     */
+    public WatchedPosition addStopLossPosition(
+            Instrument instrument,
+            OrderType orderType,
+            int quantity,
+            BigDecimal entryPrice,
+            BigDecimal stopLossPercentage,
+            boolean moveToBreakeven,
+            boolean trailingStopLoss,
+            BigDecimal trailingDistance,
+            StopLossType stopLossType,
+            StopLossType trailingType) {
+
+        // Calculate initial stop price
+        BigDecimal initialStopPrice;
+
+        if (stopLossType == StopLossType.PERCENTAGE) {
+            // Calculate stop loss as percentage of entry price
+            BigDecimal stopAmount = entryPrice.multiply(stopLossPercentage).divide(new BigDecimal(100));
+
+            if (orderType == OrderType.BUY) {
+                // For long positions, stop is below entry
+                initialStopPrice = entryPrice.subtract(stopAmount);
+            } else {
+                // For short positions, stop is above entry
+                initialStopPrice = entryPrice.add(stopAmount);
+            }
+        } else {
+            // Use points directly
+            if (orderType == OrderType.BUY) {
+                // For long positions, stop is below entry
+                initialStopPrice = entryPrice.subtract(stopLossPercentage);
+            } else {
+                // For short positions, stop is above entry
+                initialStopPrice = entryPrice.add(stopLossPercentage);
+            }
+        }
+
+        WatchedPosition position = WatchedPosition.builder()
+                .instrument(instrument)
+                .orderType(orderType)
+                .quantity(quantity)
+                .entryPrice(entryPrice)
+                .entryTime(LocalDateTime.now())
+                .source(PositionSource.STRATEGY)
+                .stopLossPercentage(stopLossPercentage)
+                .stopLossType(stopLossType)
+                .moveToBreakeven(moveToBreakeven)
+                .trailingStopLoss(trailingStopLoss)
+                .trailingDistance(trailingDistance)
+                .trailingType(trailingType)
+                .currentStopPrice(initialStopPrice)
+                .status(PositionStatus.ACTIVE)
+                .build();
+
+        addPosition(position);
+        return position;
+    }
+
+    /**
+     * Add a stop loss position with default types (backward compatibility)
      */
     public WatchedPosition addStopLossPosition(
             Instrument instrument,
@@ -266,35 +328,18 @@ public class PositionWatchlistService implements MarketDataSubscriber {
             boolean trailingStopLoss,
             BigDecimal trailingDistance) {
 
-        // Calculate initial stop price
-        BigDecimal stopAmount = entryPrice.multiply(stopLossPercentage).divide(new BigDecimal(100));
-        BigDecimal initialStopPrice;
-
-        if (orderType == OrderType.BUY) {
-            // For long positions, stop is below entry
-            initialStopPrice = entryPrice.subtract(stopAmount);
-        } else {
-            // For short positions, stop is above entry
-            initialStopPrice = entryPrice.add(stopAmount);
-        }
-
-        WatchedPosition position = WatchedPosition.builder()
-                .instrument(instrument)
-                .orderType(orderType)
-                .quantity(quantity)
-                .entryPrice(entryPrice)
-                .entryTime(LocalDateTime.now())
-                .source(PositionSource.STRATEGY)
-                .stopLossPercentage(stopLossPercentage)
-                .moveToBreakeven(moveToBreakeven)
-                .trailingStopLoss(trailingStopLoss)
-                .trailingDistance(trailingDistance)
-                .currentStopPrice(initialStopPrice)
-                .status(PositionStatus.ACTIVE)
-                .build();
-
-        addPosition(position);
-        return position;
+        return addStopLossPosition(
+                instrument,
+                orderType,
+                quantity,
+                entryPrice,
+                stopLossPercentage,
+                moveToBreakeven,
+                trailingStopLoss,
+                trailingDistance,
+                StopLossType.PERCENTAGE, // Default for backward compatibility
+                StopLossType.POINTS // Default for backward compatibility
+        );
     }
 
     /**
@@ -544,15 +589,22 @@ public class PositionWatchlistService implements MarketDataSubscriber {
             return;
         }
 
+        // Calculate the required profit amount
+        BigDecimal requiredProfit;
+        if (position.getTrailingType() == StopLossType.PERCENTAGE) {
+            // Calculate 2x trailing distance as percentage of entry price
+            requiredProfit = entryPrice.multiply(trailingDistance).multiply(new BigDecimal(2))
+                    .divide(new BigDecimal(100));
+        } else {
+            // Use 2x absolute points directly
+            requiredProfit = trailingDistance.multiply(new BigDecimal(2));
+        }
+
         // Check if we haven't already moved to breakeven and have sufficient profit
         if (position.getOrderType() == OrderType.BUY) {
             // For long positions
             if (stopPrice.compareTo(entryPrice) < 0 && // Stop is still below entry
-                    currentPrice.subtract(entryPrice).compareTo(trailingDistance.multiply(new BigDecimal(2))) > 0) { // Sufficient
-                                                                                                                     // profit
-                                                                                                                     // (2x
-                                                                                                                     // trailing
-                                                                                                                     // distance)
+                    currentPrice.subtract(entryPrice).compareTo(requiredProfit) > 0) { // Sufficient profit
 
                 position.setCurrentStopPrice(entryPrice);
                 LOGGER.info("Moved stop to breakeven for position: " + position);
@@ -560,11 +612,7 @@ public class PositionWatchlistService implements MarketDataSubscriber {
         } else {
             // For short positions
             if (stopPrice.compareTo(entryPrice) > 0 && // Stop is still above entry
-                    entryPrice.subtract(currentPrice).compareTo(trailingDistance.multiply(new BigDecimal(2))) > 0) { // Sufficient
-                                                                                                                     // profit
-                                                                                                                     // (2x
-                                                                                                                     // trailing
-                                                                                                                     // distance)
+                    entryPrice.subtract(currentPrice).compareTo(requiredProfit) > 0) { // Sufficient profit
 
                 position.setCurrentStopPrice(entryPrice);
                 LOGGER.info("Moved stop to breakeven for position: " + position);
@@ -576,21 +624,35 @@ public class PositionWatchlistService implements MarketDataSubscriber {
      * Adjust trailing stop based on highest/lowest seen prices
      */
     private void adjustTrailingStop(WatchedPosition position) {
+        BigDecimal trailingAmount;
+
         if (position.getOrderType() == OrderType.BUY) {
             // For long positions, adjust based on highest price seen
             BigDecimal highestSeen = position.getHighestSeen();
             BigDecimal trailingDistance = position.getTrailingDistance();
             BigDecimal currentStop = position.getCurrentStopPrice();
 
-            if (highestSeen != null && trailingDistance != null && currentStop != null) {
-                BigDecimal newStop = highestSeen.subtract(trailingDistance);
+            if (highestSeen == null || trailingDistance == null || currentStop == null) {
+                return;
+            }
 
-                // Only move stop up, never down
-                if (newStop.compareTo(currentStop) > 0) {
-                    position.setCurrentStopPrice(newStop);
-                    LOGGER.fine("Adjusted trailing stop for position " + position.getId() +
-                            " to " + newStop + " based on highest price " + highestSeen);
-                }
+            // Calculate trailing amount based on type
+            if (position.getTrailingType() == StopLossType.PERCENTAGE) {
+                // Calculate as percentage of highest price
+                trailingAmount = highestSeen.multiply(trailingDistance).divide(new BigDecimal(100));
+            } else {
+                // Use absolute points
+                trailingAmount = trailingDistance;
+            }
+
+            // Calculate new stop price
+            BigDecimal newStop = highestSeen.subtract(trailingAmount);
+
+            // Only move stop up, never down
+            if (newStop.compareTo(currentStop) > 0) {
+                position.setCurrentStopPrice(newStop);
+                LOGGER.fine("Adjusted trailing stop for position " + position.getId() +
+                        " to " + newStop + " based on highest price " + highestSeen);
             }
         } else {
             // For short positions, adjust based on lowest price seen
@@ -598,15 +660,27 @@ public class PositionWatchlistService implements MarketDataSubscriber {
             BigDecimal trailingDistance = position.getTrailingDistance();
             BigDecimal currentStop = position.getCurrentStopPrice();
 
-            if (lowestSeen != null && trailingDistance != null && currentStop != null) {
-                BigDecimal newStop = lowestSeen.add(trailingDistance);
+            if (lowestSeen == null || trailingDistance == null || currentStop == null) {
+                return;
+            }
 
-                // Only move stop down, never up
-                if (newStop.compareTo(currentStop) < 0) {
-                    position.setCurrentStopPrice(newStop);
-                    LOGGER.fine("Adjusted trailing stop for position " + position.getId() +
-                            " to " + newStop + " based on lowest price " + lowestSeen);
-                }
+            // Calculate trailing amount based on type
+            if (position.getTrailingType() == StopLossType.PERCENTAGE) {
+                // Calculate as percentage of lowest price
+                trailingAmount = lowestSeen.multiply(trailingDistance).divide(new BigDecimal(100));
+            } else {
+                // Use absolute points
+                trailingAmount = trailingDistance;
+            }
+
+            // Calculate new stop price
+            BigDecimal newStop = lowestSeen.add(trailingAmount);
+
+            // Only move stop down, never up
+            if (newStop.compareTo(currentStop) < 0) {
+                position.setCurrentStopPrice(newStop);
+                LOGGER.fine("Adjusted trailing stop for position " + position.getId() +
+                        " to " + newStop + " based on lowest price " + lowestSeen);
             }
         }
     }

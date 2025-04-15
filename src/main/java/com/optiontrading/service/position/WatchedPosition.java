@@ -35,6 +35,8 @@ public class WatchedPosition implements Serializable {
     private boolean moveToBreakeven;
     private boolean trailingStopLoss;
     private BigDecimal trailingDistance;
+    private StopLossType stopLossType; // Type of stop loss calculation (percentage or points)
+    private StopLossType trailingType; // Type of trailing stop calculation (percentage or points)
 
     // Dynamic values that change during monitoring
     private BigDecimal currentStopPrice;
@@ -66,6 +68,8 @@ public class WatchedPosition implements Serializable {
         this.moveToBreakeven = builder.moveToBreakeven;
         this.trailingStopLoss = builder.trailingStopLoss;
         this.trailingDistance = builder.trailingDistance;
+        this.stopLossType = builder.stopLossType != null ? builder.stopLossType : StopLossType.PERCENTAGE;
+        this.trailingType = builder.trailingType != null ? builder.trailingType : StopLossType.POINTS;
         this.currentStopPrice = builder.currentStopPrice;
         this.highestSeen = builder.highestSeen != null ? builder.highestSeen : entryPrice;
         this.lowestSeen = builder.lowestSeen != null ? builder.lowestSeen : entryPrice;
@@ -551,6 +555,44 @@ public class WatchedPosition implements Serializable {
     }
 
     /**
+     * Get the stop loss type (percentage or points)
+     * 
+     * @return the stop loss type
+     */
+    public StopLossType getStopLossType() {
+        // Default to PERCENTAGE for backward compatibility with older positions
+        return stopLossType != null ? stopLossType : StopLossType.PERCENTAGE;
+    }
+
+    /**
+     * Get the trailing stop type (percentage or points)
+     * 
+     * @return the trailing stop type
+     */
+    public StopLossType getTrailingType() {
+        // Default to POINTS for backward compatibility with older positions
+        return trailingType != null ? trailingType : StopLossType.POINTS;
+    }
+
+    /**
+     * Set the stop loss type
+     * 
+     * @param stopLossType the stop loss type
+     */
+    public void setStopLossType(StopLossType stopLossType) {
+        this.stopLossType = stopLossType;
+    }
+
+    /**
+     * Set the trailing stop type
+     * 
+     * @param trailingType the trailing stop type
+     */
+    public void setTrailingType(StopLossType trailingType) {
+        this.trailingType = trailingType;
+    }
+
+    /**
      * Builder for WatchedPosition
      */
     public static class Builder {
@@ -566,6 +608,8 @@ public class WatchedPosition implements Serializable {
         private boolean moveToBreakeven;
         private boolean trailingStopLoss;
         private BigDecimal trailingDistance;
+        private StopLossType stopLossType;
+        private StopLossType trailingType;
         private BigDecimal currentStopPrice;
         private BigDecimal highestSeen;
         private BigDecimal lowestSeen;
@@ -632,6 +676,16 @@ public class WatchedPosition implements Serializable {
 
         public Builder trailingDistance(BigDecimal trailingDistance) {
             this.trailingDistance = trailingDistance;
+            return this;
+        }
+
+        public Builder stopLossType(StopLossType stopLossType) {
+            this.stopLossType = stopLossType;
+            return this;
+        }
+
+        public Builder trailingType(StopLossType trailingType) {
+            this.trailingType = trailingType;
             return this;
         }
 

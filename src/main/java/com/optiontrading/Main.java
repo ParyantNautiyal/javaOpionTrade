@@ -16,6 +16,7 @@ import com.optiontrading.service.auth.AuthService;
 import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.order.OrderRepository;
+import com.optiontrading.service.position.StopLossType;
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -584,15 +585,28 @@ public class Main {
             boolean trailingSl = false;
             BigDecimal stopLossPercentage = new BigDecimal("5.0"); // Default
             BigDecimal trailingDistance = new BigDecimal("0.5"); // Default
+            StopLossType stopLossType = StopLossType.PERCENTAGE; // Default
+            StopLossType trailingType = StopLossType.POINTS; // Default
 
             if (stopLossEnabled) {
-                System.out.print("Enter Stop Loss Percentage (default 5.0): ");
+                System.out.println("Select Stop Loss Type:");
+                System.out.println("1. Percentage (% of price)");
+                System.out.println("2. Points (absolute value)");
+                System.out.print("Enter selection (default is Percentage): ");
+                String stopLossTypeInput = scanner.nextLine().trim();
+                if (stopLossTypeInput.equals("2")) {
+                    stopLossType = StopLossType.POINTS;
+                }
+
+                System.out.print("Enter Stop Loss "
+                        + (stopLossType == StopLossType.PERCENTAGE ? "Percentage" : "Points") + " (default "
+                        + (stopLossType == StopLossType.PERCENTAGE ? "5.0%" : "5.0 points") + "): ");
                 String slPercentInput = scanner.nextLine().trim();
                 if (!slPercentInput.isEmpty()) {
                     try {
                         stopLossPercentage = new BigDecimal(slPercentInput);
                     } catch (NumberFormatException e) {
-                        System.out.println("Invalid input, using default 5.0%");
+                        System.out.println("Invalid input, using default 5.0");
                     }
                 }
 
@@ -603,7 +617,18 @@ public class Main {
                 trailingSl = scanner.nextLine().trim().equalsIgnoreCase("y");
 
                 if (trailingSl) {
-                    System.out.print("Enter Trailing Distance (default 0.5): ");
+                    System.out.println("Select Trailing Stop Loss Type:");
+                    System.out.println("1. Percentage (% of price)");
+                    System.out.println("2. Points (absolute value)");
+                    System.out.print("Enter selection (default is Points): ");
+                    String trailingTypeInput = scanner.nextLine().trim();
+                    if (trailingTypeInput.equals("1")) {
+                        trailingType = StopLossType.PERCENTAGE;
+                    }
+
+                    System.out.print("Enter Trailing Distance "
+                            + (trailingType == StopLossType.PERCENTAGE ? "Percentage" : "Points") + " (default "
+                            + (trailingType == StopLossType.PERCENTAGE ? "0.5%" : "0.5 points") + "): ");
                     String trailingDistInput = scanner.nextLine().trim();
                     if (!trailingDistInput.isEmpty()) {
                         try {
@@ -638,6 +663,8 @@ public class Main {
                     .trailingSl(trailingSl)
                     .stopLossPercentage(stopLossPercentage)
                     .trailingDistance(trailingDistance)
+                    .stopLossType(stopLossType)
+                    .trailingType(trailingType)
                     .hedgingEnabled(hedgingEnabled)
                     .hedgePointDifference(hedgePointDifference)
                     .build();
