@@ -36,12 +36,16 @@ public class OrderRepository {
     // Event bus for publishing events
     private final EventBus eventBus;
 
+    // Order logger service for detailed lifecycle logging
+    private final OrderLoggerService orderLoggerService;
+
     /**
      * Constructor with dependency injection
      */
     @Inject
-    public OrderRepository(EventBus eventBus) {
+    public OrderRepository(EventBus eventBus, OrderLoggerService orderLoggerService) {
         this.eventBus = eventBus;
+        this.orderLoggerService = orderLoggerService;
         LOGGER.info("Initialized OrderRepository with dependency injection");
     }
 
@@ -61,7 +65,10 @@ public class OrderRepository {
 
         LOGGER.info("Created scheduled order: " + order);
 
-        // Publish event (you would create this class)
+        // Log order creation to dedicated file
+        orderLoggerService.logOrderCreated(order);
+
+        // Publish event
         eventBus.publishAsync(new OrderCreatedEvent(order));
 
         return order;
@@ -142,9 +149,12 @@ public class OrderRepository {
             // Force print to standard output as well for visibility
             System.out.println("[STATUS] " + logMessage);
 
-            // Publish event (you would create this class)
-            eventBus.publishAsync(new OrderStatusChangedEvent(orderId, oldStatus, newStatus));
-            LOGGER.info("Published OrderStatusChangedEvent for order: " + orderId);
+            // Log to dedicated file through logger service
+            orderLoggerService.logOrderStatusChange(orderId, oldStatus, newStatus);
+
+            // Publish event for status change
+            eventBus.publishAsync(new OrderStatusChangeEvent(orderId, oldStatus, newStatus));
+            LOGGER.info("Published OrderStatusChangeEvent for order: " + orderId);
 
             return true;
         } catch (Exception e) {
@@ -168,7 +178,10 @@ public class OrderRepository {
 
         LOGGER.info("Deleted order: " + order);
 
-        // Publish event (you would create this class)
+        // Log order deletion to dedicated file
+        orderLoggerService.logMessage(orderId, "ORDER DELETED - Order removed from the system");
+
+        // Publish event
         eventBus.publishAsync(new OrderDeletedEvent(orderId));
 
         return true;
@@ -182,6 +195,12 @@ public class OrderRepository {
      */
     public void storePreFilteredInstruments(String orderId, List<Instrument> instruments) {
         preFilteredInstrumentsMap.put(orderId, instruments);
+
+        // Log to dedicated file
+        if (instruments != null) {
+            orderLoggerService.logMessage(orderId, "PRE-FILTERED INSTRUMENTS - Cached " +
+                    instruments.size() + " instruments for efficient option selection");
+        }
     }
 
     /**
@@ -201,5 +220,10 @@ public class OrderRepository {
      */
     public void clearPreFilteredInstruments(String orderId) {
         preFilteredInstrumentsMap.remove(orderId);
+        String details = "Removed pre-filtered instruments cache";
+        orderLoggerService.logMessage(orderId, "CLEANED UP - " + details);
+
+        // Publish OrderCleanupEvent
+        eventBus.publishAsync(new OrderCleanupEvent(orderId, details));
     }
 }

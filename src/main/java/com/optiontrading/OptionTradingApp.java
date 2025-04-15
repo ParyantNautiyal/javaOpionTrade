@@ -1,20 +1,19 @@
 package com.optiontrading;
 
-import com.optiontrading.utils.TradeLogManager;
-
+/**
+ * Simple entry point for the option trading application.
+ */
 public class OptionTradingApp {
-
     public static void main(String[] args) {
-        // Initialize trade logging
-        TradeLogManager.initialize();
+        System.out.println("Starting Option Trading application");
 
-        // ... existing code ...
+        // Initialize application
+        Main.main(args);
     }
 
     public static void shutdown() {
-        // ... existing shutdown code ...
+        System.out.println("Shutting down Option Trading application");
 
-        // Shutdown trade logging
-        TradeLogManager.shutdown();
+        // Application cleanup happens in Main class
     }
 }

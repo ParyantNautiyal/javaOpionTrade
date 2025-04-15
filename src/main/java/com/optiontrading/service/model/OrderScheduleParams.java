@@ -1,5 +1,6 @@
 package com.optiontrading.service.model;
 
+import com.optiontrading.config.ConfigurationManager;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -20,6 +21,14 @@ public class OrderScheduleParams {
     private final boolean moveSlToCost;
     private final boolean trailingSl;
     private final LocalDateTime executionTime;
+
+    // Configuration keys
+    private static final String DEFAULT_STOP_LOSS_PERCENT_KEY = "trading.default.stop.loss.percentage";
+    private static final String DEFAULT_HEDGE_POINT_DIFF_KEY = "trading.default.hedge.point.difference";
+
+    // Default values (used if configuration is not available)
+    private static final double DEFAULT_THRESHOLD = 5.0;
+    private static final int DEFAULT_HEDGE_POINT_DIFFERENCE = 1500;
 
     private OrderScheduleParams(Builder builder) {
         this.indexSymbol = builder.indexSymbol;
@@ -88,6 +97,30 @@ public class OrderScheduleParams {
         return new Builder();
     }
 
+    /**
+     * Create a builder with default values from configuration
+     * 
+     * @param configManager the configuration manager to get defaults from
+     * @return a builder with defaults from configuration
+     */
+    public static Builder builderWithDefaults(ConfigurationManager configManager) {
+        Builder builder = new Builder();
+
+        if (configManager != null) {
+            // Get default stop loss percentage from configuration
+            double defaultStopLossPercent = configManager.getDouble(
+                    DEFAULT_STOP_LOSS_PERCENT_KEY, DEFAULT_THRESHOLD);
+            builder.threshold(defaultStopLossPercent);
+
+            // Get default hedge point difference from configuration
+            int defaultHedgePointDiff = configManager.getInt(
+                    DEFAULT_HEDGE_POINT_DIFF_KEY, DEFAULT_HEDGE_POINT_DIFFERENCE);
+            builder.hedgePointDifference(defaultHedgePointDiff);
+        }
+
+        return builder;
+    }
+
     @Override
     public String toString() {
         return "OrderScheduleParams{" +
@@ -107,12 +140,12 @@ public class OrderScheduleParams {
     public static class Builder {
         private String indexSymbol;
         private LocalDate expiryDate;
-        private double threshold = 5.0; // default value
+        private double threshold = DEFAULT_THRESHOLD; // default value
         private BigDecimal targetPremium;
         private int lots = 1; // default value
         private OrderType orderType = OrderType.BUY; // default value
         private boolean hedgingEnabled = false;
-        private int hedgePointDifference = 0;
+        private int hedgePointDifference = DEFAULT_HEDGE_POINT_DIFFERENCE;
         private boolean stopLossEnabled = false;
         private boolean moveSlToCost = false;
         private boolean trailingSl = false;

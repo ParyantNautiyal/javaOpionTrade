@@ -23,6 +23,7 @@ import com.optiontrading.service.order.MainOrderPlacedEvent;
 import com.optiontrading.service.order.OrderExecutionCoordinator;
 import com.optiontrading.service.order.OrderRepository;
 import com.optiontrading.service.option.BestOptionsUpdatedEvent;
+import com.optiontrading.config.ConfigurationManager;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -47,6 +48,7 @@ public class TestApplication {
     private final TradingApiClient tradingApiClient;
     private final AuthService authService;
     private final ResourceManager resourceManager;
+    private final ConfigurationManager configManager;
 
     /**
      * Create a new test application using dependency injection
@@ -60,7 +62,8 @@ public class TestApplication {
             EventBus eventBus,
             TradingApiClient tradingApiClient,
             AuthService authService,
-            ResourceManager resourceManager) {
+            ResourceManager resourceManager,
+            ConfigurationManager configManager) {
         this.marketDataService = marketDataService;
         this.instrumentService = instrumentService;
         this.orderRepository = orderRepository;
@@ -69,6 +72,7 @@ public class TestApplication {
         this.tradingApiClient = tradingApiClient;
         this.authService = authService;
         this.resourceManager = resourceManager;
+        this.configManager = configManager;
 
         // Subscribe to events
         subscribeToEvents();
@@ -387,7 +391,7 @@ public class TestApplication {
         LocalDateTime executionTime = getExecutionTimeInput(scanner);
 
         // Create order params
-        OrderScheduleParams params = OrderScheduleParams.builder()
+        OrderScheduleParams params = OrderScheduleParams.builderWithDefaults(configManager)
                 .indexSymbol(indexSymbol)
                 .expiryDate(expiryDate)
                 .threshold(threshold)

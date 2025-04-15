@@ -13,7 +13,7 @@ import java.util.logging.Logger;
 
 /**
  * Specialized logger for option trading operations
- * Highly focused on option chain calculations and order placement
+ * Modified to minimize logging output
  */
 public class TradeLogManager {
 
@@ -22,9 +22,8 @@ public class TradeLogManager {
     private static FileHandler tradeFileHandler;
     private static final Logger LOGGER = Logger.getLogger(TradeLogManager.class.getName());
 
-    // Only monitor critical services
+    // Minimal set of loggers to monitor - only the most critical service
     private static final String[] MONITORED_LOGGERS = {
-            "com.optiontrading.service.option.OptionChainService",
             "com.optiontrading.service.order.OrderExecutionCoordinator"
     };
 
@@ -33,6 +32,7 @@ public class TradeLogManager {
 
     /**
      * Initialize the specialized option calculation and order placement logger
+     * with minimal logging enabled
      */
     public static void initialize() {
         if (initialized) {
@@ -61,7 +61,7 @@ public class TradeLogManager {
                         LOGGER.info("Created new log file: " + logFile.getAbsolutePath());
                         // Write an initial entry
                         try (FileWriter writer = new FileWriter(logFile)) {
-                            writer.write("=== Option Chain & Order Placement Log File Created: " +
+                            writer.write("=== Option Trading Log File Created: " +
                                     new SimpleDateFormat("yyyy-MM-dd HH:mm:ss").format(new Date()) + " ===\n");
                         }
                     }
@@ -78,12 +78,13 @@ public class TradeLogManager {
                 }
             }
 
-            // Configure the file handler
+            // Configure the file handler with minimal logging
             try {
-                tradeFileHandler = new FileHandler(logPath, 1048576, 2, true); // 1MB file, 2 files max
+                tradeFileHandler = new FileHandler(logPath, 512000, 2, true); // 512KB file, 2 files max (reduced size)
                 tradeFileHandler.setFormatter(new TradeLogFormatter());
-                tradeFileHandler.setFilter(new TradeLogFilter()); // Apply our strict filter
-                tradeFileHandler.setLevel(Level.INFO);
+
+                // Only log WARNING or higher - significantly reduces log volume
+                tradeFileHandler.setLevel(Level.WARNING);
 
                 // Add handler only to monitored loggers and prevent propagation
                 for (String loggerName : MONITORED_LOGGERS) {
@@ -100,17 +101,11 @@ public class TradeLogManager {
                     LOGGER.info("Added handler to " + loggerName);
                 }
 
-                // Also create a specific trade event logger for manual entries
-                Logger tradeEventLogger = Logger.getLogger("com.optiontrading.TradeEvents");
-                removeExistingHandlers(tradeEventLogger);
-                tradeEventLogger.setUseParentHandlers(false);
-                tradeEventLogger.addHandler(tradeFileHandler);
-
                 // Mark as initialized
                 initialized = true;
 
                 // Log a startup message to the file
-                logTradeEvent("Option chain and order placement logging activated");
+                logTradeEvent("Option trading logging activated - minimal logging mode");
 
                 LOGGER.info("Trade logging initialized successfully. Using file: " + logFile.getAbsolutePath());
             } catch (Exception e) {
@@ -134,48 +129,41 @@ public class TradeLogManager {
     }
 
     /**
-     * Manually log an important trading event
+     * Log a critical trading event - use this only for important events
      * 
      * @param message The message to log
      */
     public static void logTradeEvent(String message) {
-        Logger.getLogger("com.optiontrading.TradeEvents").info(message);
+        // Only log the event if it's truly important
+        if (message != null &&
+                (message.contains("ERROR") ||
+                        message.contains("FAILED") ||
+                        message.contains("EXECUTED") ||
+                        message.contains("COMPLETED"))) {
+            Logger.getLogger("com.optiontrading.TradeEvents").warning(message);
+        }
     }
 
     /**
-     * Custom formatter for trade logs
+     * Custom formatter for trade logs - simplified to reduce log size
      */
     static class TradeLogFormatter extends Formatter {
-        private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss.SSS");
+        private final SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
 
         @Override
         public String format(LogRecord record) {
             StringBuilder sb = new StringBuilder();
 
-            // Format: [time] [level] [source] message
+            // Simplified format: [time] [level] [source] message
             sb.append("[")
                     .append(dateFormat.format(new Date(record.getMillis())))
                     .append("] [")
                     .append(record.getLevel().getName())
-                    .append("] [")
-                    .append(getSourceClassName(record))
                     .append("] ")
                     .append(formatMessage(record))
                     .append("\n");
 
             return sb.toString();
-        }
-
-        private String getSourceClassName(LogRecord record) {
-            String sourceClassName = record.getSourceClassName();
-            if (sourceClassName != null) {
-                // Just get the simple class name, not the full package
-                int lastDot = sourceClassName.lastIndexOf('.');
-                if (lastDot > 0) {
-                    return sourceClassName.substring(lastDot + 1);
-                }
-            }
-            return record.getLoggerName();
         }
     }
 

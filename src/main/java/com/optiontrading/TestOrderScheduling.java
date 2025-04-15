@@ -2,6 +2,7 @@ package com.optiontrading;
 
 import com.google.inject.Guice;
 import com.google.inject.Injector;
+import com.optiontrading.config.ConfigurationManager;
 import com.optiontrading.di.AppModule;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.model.OrderStatus;
@@ -38,20 +39,20 @@ public class TestOrderScheduling {
             // Get necessary services from Guice
             OrderRepository orderRepository = injector.getInstance(OrderRepository.class);
             OrderExecutionCoordinator coordinator = injector.getInstance(OrderExecutionCoordinator.class);
+            ConfigurationManager configManager = injector.getInstance(ConfigurationManager.class);
 
             // Create a scheduled order for execution 1 minute from now
             LocalDateTime executionTime = LocalDateTime.now().plusMinutes(1);
             DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss");
             System.out.println("\nCreating order for execution at: " + executionTime.format(formatter));
 
-            // Create order parameters
-            OrderScheduleParams params = OrderScheduleParams.builder()
+            // Create order parameters using defaults from config
+            OrderScheduleParams params = OrderScheduleParams.builderWithDefaults(configManager)
                     .indexSymbol("NIFTY")
                     .expiryDate(LocalDate.now().plusDays(7)) // Next week's expiry
                     .targetPremium(new BigDecimal("50")) // Target premium of 50
                     .lots(1)
                     .executionTime(executionTime)
-                    .threshold(5.0) // Default threshold for strike selection
                     .build();
 
             // Create the order

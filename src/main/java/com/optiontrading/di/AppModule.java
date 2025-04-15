@@ -18,6 +18,7 @@ import com.optiontrading.service.market.MarketDataProvider;
 import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.order.MainOrderPlacedEventHandler;
 import com.optiontrading.service.order.OrderExecutionCoordinator;
+import com.optiontrading.service.order.OrderLoggerService;
 import com.optiontrading.service.order.OrderRepository;
 import com.optiontrading.service.position.PositionRepository;
 import com.optiontrading.service.position.PositionWatchlistService;
@@ -56,6 +57,7 @@ public class AppModule extends AbstractModule {
         bind(InstrumentService.class).in(Singleton.class);
 
         // Order services
+        bind(OrderLoggerService.class).in(Singleton.class);
         bind(OrderRepository.class).in(Singleton.class);
         bind(OrderExecutionCoordinator.class).in(Singleton.class);
         bind(MainOrderPlacedEventHandler.class).in(Singleton.class);

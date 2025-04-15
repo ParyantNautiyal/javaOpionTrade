@@ -16,8 +16,6 @@ import com.optiontrading.service.auth.AuthService;
 import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.order.OrderRepository;
-import com.optiontrading.ui.OrderEntryUI;
-
 import java.io.File;
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -29,31 +27,24 @@ import java.util.List;
 import java.util.Scanner;
 import java.util.TimerTask;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.ConsoleHandler;
-import java.util.logging.FileHandler;
 import java.util.logging.Handler;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.logging.SimpleFormatter;
 import java.util.stream.Collectors;
 
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OrderType;
-import com.optiontrading.service.model.OptionType;
-import com.optiontrading.service.model.ScheduledOrder;
 import com.optiontrading.service.model.OrderScheduleParams;
 import com.optiontrading.service.instrument.InstrumentService;
+import com.optiontrading.config.ConfigurationManager;
 
 import java.util.ArrayList;
 import java.util.Objects;
-
-import com.optiontrading.utils.MainLogFilter;
 
 /**
  * Main entry point for the Option Trading application.
  */
 public class Main {
-    private static final Logger LOGGER = Logger.getLogger(Main.class.getName());
     private static AtomicBoolean shutdownRequested = new AtomicBoolean(false);
 
     private final ResourceManager resourceManager;
@@ -68,109 +59,68 @@ public class Main {
     }
 
     public static void main(String[] args) {
-        // Clean up any leftover lock files from previous runs
-        com.optiontrading.utils.LockFileCleanup.cleanupLockFiles();
-
-        // Configure logging to file to avoid console interference
+        System.out.println("\n===== STARTUP SEQUENCE BEGINS =====");
+        System.out.println("[INIT] Configuring logging subsystem...");
+        // Configure logging first - now disabled
         configureLogging();
 
-        LOGGER.info("Starting Option Trading Application");
+        // Replace log with console output
+        System.out.println("[INIT] Starting Option Trading application...");
 
         try {
+            System.out.println("[INIT] Creating Guice injector with AppModule...");
             // Create Guice injector with AppModule
             Injector injector = Guice.createInjector(new AppModule());
+            System.out.println("[INIT] Guice injector created successfully");
 
+            System.out.println("[INIT] Getting Main application instance from Guice...");
             // Get Main application instance from Guice
             Main app = injector.getInstance(Main.class);
+            System.out.println("[INIT] Main application instance created successfully");
 
+            System.out.println("[INIT] Initiating application startup sequence...");
             // Start the application
             app.start();
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Unhandled exception in main", e);
-            System.err.println("Fatal error: " + e.getMessage());
+            // Use System.err instead of LOGGER
+            System.err.println("[ERROR] Fatal error during application startup: " + e.getMessage());
             e.printStackTrace();
+            System.exit(1);
         }
     }
 
     /**
-     * Configure logging for the application
+     * Configure logging for the application - all logging disabled
      */
     private static void configureLogging() {
         try {
-            // Create logs directory if it doesn't exist
-            File logDir = new File("logs");
-            if (!logDir.exists()) {
-                logDir.mkdirs();
-            }
-
-            // Set up file handler
-            FileHandler fileHandler = new FileHandler("logs/app.log", 1048576, 10, true);
-            fileHandler.setFormatter(new SimpleFormatter());
-
-            // Apply our filter to show only OptionChainService logs
-            fileHandler.setFilter(new MainLogFilter());
-
-            // Get the root logger and set the level
+            // Configure global logging - completely disabled
             Logger rootLogger = Logger.getLogger("");
-            rootLogger.setLevel(Level.INFO);
 
-            // Remove any existing handlers to avoid duplicates
-            Handler[] handlers = rootLogger.getHandlers();
-            for (Handler handler : handlers) {
+            // Remove existing handlers
+            for (Handler handler : rootLogger.getHandlers()) {
                 rootLogger.removeHandler(handler);
             }
 
-            // Add our filtered handler
-            rootLogger.addHandler(fileHandler);
+            // Set global log level to OFF to disable all logging
+            rootLogger.setLevel(Level.OFF);
 
-            // Also keep console output for startup information
-            ConsoleHandler consoleHandler = new ConsoleHandler();
-            consoleHandler.setLevel(Level.INFO);
-            consoleHandler.setFilter(new MainLogFilter());
-            rootLogger.addHandler(consoleHandler);
+            // Don't add any handlers
 
-            Logger.getLogger(Main.class.getName())
-                    .info("Logging configured to show only OptionChainService logs in logs/app.log and console");
-        } catch (IOException e) {
-            e.printStackTrace();
+            // Don't set individual logger levels as they won't matter
+
+            System.out.println("Logging disabled globally");
+        } catch (Exception e) {
+            System.err.println("Error configuring logging: " + e.getMessage());
         }
     }
 
     /**
-     * Shutdown all loggers and close file handlers to prevent .lck files
+     * Shutdown logging - now simplified since logging is disabled
      */
     private static void shutdownLogging() {
-        LOGGER.info("Closing all logger file handlers");
-
-        // Close all handlers on the root logger
-        Logger rootLogger = Logger.getLogger("");
-        for (Handler handler : rootLogger.getHandlers()) {
-            handler.close();
-            rootLogger.removeHandler(handler);
-        }
-
-        // Also close specific loggers that maintain their own handlers
-        try {
-            com.optiontrading.utils.TradeLogManager.shutdown();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error shutting down TradeLogManager", e);
-        }
-
-        try {
-            com.optiontrading.logging.InstrumentLogger.shutdown();
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error shutting down InstrumentLogger", e);
-        }
-
-        try {
-            if (com.optiontrading.logging.LoggingConfigurator.class != null) {
-                com.optiontrading.logging.LoggingConfigurator.shutdown();
-            }
-        } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error shutting down LoggingConfigurator", e);
-        }
-
-        LOGGER.info("All logger file handlers closed");
+        // No-op since logging is disabled
+        System.out.println("No logging to shut down (logging is disabled)");
     }
 
     /**
@@ -178,78 +128,109 @@ public class Main {
      */
     public void start() {
         try {
-            LOGGER.info("Resource manager initialized");
-            LOGGER.info("Application context initialized");
+            // Add detailed component initialization logging
+            System.out.println("\n===== COMPONENT INITIALIZATION =====");
+
+            System.out.println("[COMPONENT] Initializing ResourceManager...");
+            System.out.println("[FILE] Working directory: " + new File("").getAbsolutePath());
+            System.out.println("[COMPONENT] ResourceManager initialized successfully");
+
+            System.out.println("[COMPONENT] Initializing ApplicationContext...");
+            System.out.println("[COMPONENT] ApplicationContext initialized successfully");
 
             // Setup event subscribers
+            System.out.println("[COMPONENT] Setting up EventBus subscribers...");
             setupEventSubscribers(eventBus);
+            System.out.println("[COMPONENT] EventBus subscribers configured successfully");
 
             // Ensure Kite API authentication with interactive mode
             System.out.println("\n===== CHECKING AUTHENTICATION =====");
-            System.out.println("Checking for saved Kite API credentials and tokens...");
-            System.out.println("You may need to enter your API key and request token if not found.");
+            System.out.println("[AUTH] Checking for saved Kite API credentials and tokens...");
+            System.out
+                    .println("[AUTH] Loading from: " + new File("config", "kite_tokens.properties").getAbsolutePath());
+            System.out.println("[USER] You may need to enter your API key and request token if not found.");
+
+            System.out.println("[AUTH] Initiating authentication process...");
             boolean authenticated = appContext.ensureAuthenticated();
+            System.out.println(
+                    "[AUTH] Authentication process completed with result: " + (authenticated ? "SUCCESS" : "FAILURE"));
 
             if (!authenticated) {
-                LOGGER.severe("Failed to authenticate with Kite API even after interactive mode");
+                // Replace LOGGER with System.err
+                System.err.println("[AUTH] Failed to authenticate with Kite API even after interactive mode");
                 System.out.println("\n===== AUTHENTICATION FAILED =====");
                 System.out.println(
-                        "Could not authenticate with Kite API. The application will continue in limited mode.");
-                System.out.println("You can retry authentication from the main menu.");
+                        "[USER] Could not authenticate with Kite API. The application will continue in limited mode.");
+                System.out.println("[USER] You can retry authentication from the main menu.");
 
                 // Wait for user acknowledgment
-                System.out.println("\nPress Enter to continue...");
+                System.out.println("\n[USER] Press Enter to continue...");
                 new Scanner(System.in).nextLine();
 
                 // Show console menu without starting authenticated services
+                System.out.println("[COMPONENT] Starting console UI in limited mode...");
                 showConsoleMenu(appContext);
 
                 // Exit application
-                LOGGER.info("Shutting down application");
+                System.out.println("[SHUTDOWN] Initiating application shutdown...");
+                System.out.println("[COMPONENT] Shutting down ApplicationContext...");
                 appContext.shutdown();
+                System.out.println("[COMPONENT] Shutting down ResourceManager...");
                 resourceManager.shutdown();
+                System.out.println("[SHUTDOWN] Application shutdown complete");
 
                 return;
             }
 
             System.out.println("\n===== AUTHENTICATION SUCCESSFUL =====");
             // Start authenticated services
-            System.out.println("Starting services...");
+            System.out.println("[SERVICES] Starting authenticated services...");
             appContext.startAuthenticatedServices();
+            System.out.println("[SERVICES] All authenticated services started successfully");
 
             // Print current index prices
+            System.out.println("[MARKET] Fetching current index prices...");
             printCurrentIndexPrices();
 
             // Start resource monitoring with Guice
+            System.out.println("[MONITORING] Creating ResourceMonitor instance...");
             ResourceMonitor resourceMonitor = Guice.createInjector(new AppModule()).getInstance(ResourceMonitor.class);
+            System.out.println("[MONITORING] Starting resource monitoring with 30-second interval...");
             resourceMonitor.startMonitoring(30);
-            LOGGER.info("Resource monitoring started with 30-second interval");
+            System.out.println("[MONITORING] Resource monitoring started successfully");
 
-            LOGGER.info("Application started successfully");
-            System.out.println("Application started successfully!");
+            System.out.println("\n===== STARTUP COMPLETE =====");
+            System.out.println("[SYSTEM] Application started successfully!");
 
             // Clear the console
+            System.out.println("[UI] Clearing console...");
             clearConsole();
 
             // Start user interface
+            System.out.println("[UI] Starting main console UI...");
             showConsoleMenu(appContext);
 
             // Shutdown application
-            LOGGER.info("Shutting down application");
+            System.out.println("\n===== INITIATING SHUTDOWN =====");
+            System.out.println("[SHUTDOWN] Shutting down application components...");
+            System.out.println("[COMPONENT] Shutting down ApplicationContext...");
             appContext.shutdown();
+            System.out.println("[COMPONENT] Shutting down ResourceManager...");
             resourceManager.shutdown();
+            System.out.println("[COMPONENT] Stopping resource monitoring...");
             resourceMonitor.stopMonitoring();
 
             // Shut down all loggers
+            System.out.println("[LOGGING] Shutting down logging system...");
             shutdownLogging();
 
             // Ensure application exits completely
-            LOGGER.info("Application shutdown complete. Exiting.");
+            System.out.println("[SYSTEM] Application shutdown complete. Exiting.");
             System.exit(0);
 
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "Error in application startup", e);
-            System.err.println("Fatal error: " + e.getMessage());
+            // Use System.err instead of LOGGER
+            System.err.println("[ERROR] Error in application startup: " + e.getMessage());
             e.printStackTrace();
         }
     }
@@ -344,7 +325,8 @@ public class Main {
                 System.out.println("Invalid input. Please enter a number.");
             } catch (Exception e) {
                 System.out.println("Error: " + e.getMessage());
-                LOGGER.log(Level.WARNING, "Error in console menu", e);
+                System.out.println("\nPress Enter to return to the main menu...");
+                new Scanner(System.in).nextLine();
             }
 
             // Small pause to prevent CPU spinning if there's an error in the loop
@@ -368,35 +350,30 @@ public class Main {
      * Handle re-authentication with Kite API
      */
     private static void handleReauthentication(ApplicationContext appContext) {
-        try {
-            clearConsole();
-            System.out.println("\n===== RE-AUTHENTICATION =====");
-            System.out.println("Starting re-authentication process with Kite API.");
-            System.out.println("You'll need your Kite API credentials and access to a web browser.");
-            System.out.println("Press Enter to continue or Ctrl+C to cancel...");
-            new Scanner(System.in).nextLine();
+        System.out.println("\n===== RE-AUTHENTICATION =====");
+        System.out.println("[AUTH] Starting re-authentication process...");
 
+        try {
+            System.out.println("[AUTH] Starting re-authentication with Kite API...");
             // Use the method in ApplicationContext for re-authentication
             boolean success = appContext.reAuthenticateAndRestartServices();
 
             if (success) {
-                System.out.println("\nRe-authentication and service restart successful!");
-                System.out.println("You now have full access to all trading features.");
+                System.out.println("[AUTH] Re-authentication and service restart successful!");
+                System.out.println("[USER] You now have full access to all trading features.");
             } else {
-                System.out.println("\nRe-authentication failed or service restart failed.");
-                System.out.println("The application will continue in limited mode.");
-                System.out.println("You can try again later from the main menu.");
+                System.out.println("[AUTH] Re-authentication failed or service restart failed.");
+                System.out.println("[USER] The application will continue in limited mode.");
+                System.out.println("[USER] You can try again later from the main menu.");
             }
 
-            System.out.println("\nPress Enter to return to the main menu...");
+            System.out.println("\n[USER] Press Enter to return to the main menu...");
             new Scanner(System.in).nextLine();
-
         } catch (Exception e) {
-            System.out.println("\nError during re-authentication: " + e.getMessage());
-            System.out.println("Please try again later.");
-            LOGGER.log(Level.WARNING, "Error during re-authentication", e);
+            System.out.println("\n[ERROR] Error during re-authentication: " + e.getMessage());
+            System.out.println("[USER] Please try again later.");
 
-            System.out.println("\nPress Enter to return to the main menu...");
+            System.out.println("\n[USER] Press Enter to return to the main menu...");
             new Scanner(System.in).nextLine();
         }
     }
@@ -452,7 +429,7 @@ public class Main {
         eventBus.subscribe(MarketDataEvent.class, new EventSubscriber<MarketDataEvent>() {
             @Override
             public void onEvent(MarketDataEvent event) {
-                LOGGER.info("Received market data: " + event.getSymbol() +
+                System.out.println("Received market data: " + event.getSymbol() +
                         " Last: " + event.getLastPrice());
             }
         });
@@ -461,7 +438,7 @@ public class Main {
         eventBus.subscribe(OrderEvent.class, new EventSubscriber<OrderEvent>() {
             @Override
             public void onEvent(OrderEvent event) {
-                LOGGER.info("Received order event: " + event.getOrderId() +
+                System.out.println("Received order event: " + event.getOrderId() +
                         " Status: " + event.getStatus());
             }
         });
@@ -472,104 +449,84 @@ public class Main {
      */
     private static void createOrderWithConsoleUI(Scanner scanner, ApplicationContext appContext) {
         try {
-            clearConsole();
-            System.out.println("\n===== CREATE NEW ORDER =====");
-
-            // Get required services
+            // Get services from Guice
             InstrumentService instrumentService = appContext.getService(InstrumentService.class);
             OrderRepository orderRepository = appContext.getService(OrderRepository.class);
 
-            // Ensure instruments are loaded
-            if (instrumentService.getAllInstruments().isEmpty()) {
-                System.out.println("Loading instruments... Please wait.");
-                instrumentService.refreshInstruments(false);
-            }
-
             // 1. SELECT INDEX
-            List<String> availableIndices = new ArrayList<>(instrumentService.loadAvailableSymbols());
-            if (availableIndices.size() < 3) {
-                // Ensure we have at least 3 options by adding defaults if needed
-                if (!availableIndices.contains("NIFTY"))
-                    availableIndices.add("NIFTY");
-                if (!availableIndices.contains("BANKNIFTY"))
-                    availableIndices.add("BANKNIFTY");
-                if (!availableIndices.contains("FINNIFTY"))
-                    availableIndices.add("FINNIFTY");
-            }
+            System.out.println("\n===== CREATE NEW ORDER =====");
+            System.out.println("Select Index:");
+            System.out.println("1. NIFTY");
+            System.out.println("2. BANKNIFTY");
+            System.out.println("3. FINNIFTY");
+            System.out.print("Enter selection: ");
+            int indexSelection = Integer.parseInt(scanner.nextLine().trim());
 
-            System.out.println("\nSelect Index:");
-            for (int i = 0; i < availableIndices.size(); i++) {
-                System.out.println((i + 1) + ". " + availableIndices.get(i));
+            String selectedIndex = "";
+            switch (indexSelection) {
+                case 1:
+                    selectedIndex = "NIFTY";
+                    break;
+                case 2:
+                    selectedIndex = "BANKNIFTY";
+                    break;
+                case 3:
+                    selectedIndex = "FINNIFTY";
+                    break;
+                default:
+                    System.out.println("Invalid selection. Using NIFTY as default.");
+                    selectedIndex = "NIFTY";
             }
-            System.out.print("Enter your choice (1-" + availableIndices.size() + "): ");
-            int indexChoice = Integer.parseInt(scanner.nextLine().trim());
-            String selectedIndex = availableIndices.get(indexChoice - 1);
-            System.out.println("Selected index: " + selectedIndex);
 
             // 2. SELECT EXPIRY DATE
-            List<LocalDate> availableExpiries = new ArrayList<>(instrumentService.loadAvailableExpiries(selectedIndex));
-            if (availableExpiries.isEmpty()) {
-                System.out.println("No expiry dates found for " + selectedIndex);
-                System.out.println("Please refresh instruments first using option 6 from the main menu.");
-                return;
+            System.out.println("\nAvailable Expiry Dates for " + selectedIndex + ":");
+            List<LocalDate> expiryDates = instrumentService.loadAvailableExpiries(selectedIndex);
+            for (int i = 0; i < expiryDates.size(); i++) {
+                LocalDate expiry = expiryDates.get(i);
+                System.out.println((i + 1) + ". " + expiry.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
             }
 
-            System.out.println("\n--- SELECT EXPIRY DATE ---");
-            for (int i = 0; i < availableExpiries.size(); i++) {
-                System.out.println((i + 1) + ". "
-                        + availableExpiries.get(i).format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
-            }
-            System.out.print("Enter your choice (1-" + availableExpiries.size() + "): ");
-            int expiryChoice = Integer.parseInt(scanner.nextLine().trim());
-            LocalDate selectedExpiry = availableExpiries.get(expiryChoice - 1);
-            System.out.println(
-                    "Selected expiry: " + selectedExpiry.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
+            System.out.print("Enter expiry selection: ");
+            int expirySelection = Integer.parseInt(scanner.nextLine().trim());
 
-            // 3. SELECT ORDER TYPE
+            LocalDate selectedExpiry;
+            if (expirySelection > 0 && expirySelection <= expiryDates.size()) {
+                selectedExpiry = expiryDates.get(expirySelection - 1);
+            } else {
+                System.out.println("Invalid selection. Using nearest expiry.");
+                selectedExpiry = expiryDates.get(0);
+            }
+
+            // 3. SELECT ORDER TYPE (BUY/SELL)
             System.out.println("\nSelect Order Type:");
             System.out.println("1. BUY");
             System.out.println("2. SELL");
-            System.out.print("Enter your choice (1-2): ");
-            int orderTypeChoice = Integer.parseInt(scanner.nextLine().trim());
-            OrderType selectedOrderType = (orderTypeChoice == 1) ? OrderType.BUY : OrderType.SELL;
-            System.out.println("Selected order type: " + selectedOrderType);
+            System.out.print("Enter selection: ");
+            int orderTypeSelection = Integer.parseInt(scanner.nextLine().trim());
 
-            // 4. SELECT STRIKE PRICE
-            List<Instrument> instruments = instrumentService.loadInstrumentsForSymbolAndExpiry(selectedIndex,
-                    selectedExpiry);
-            List<BigDecimal> availableStrikes = new ArrayList<>(instruments.stream()
-                    .map(Instrument::getStrikePrice)
-                    .filter(Objects::nonNull) // Filter out null strike prices
-                    .distinct()
-                    .sorted()
-                    .collect(Collectors.toList()));
-
-            if (availableStrikes.isEmpty()) {
-                // If no strikes are available, add some defaults
-                BigDecimal baseStrike = new BigDecimal("18000.00");
-                availableStrikes.add(baseStrike);
-                availableStrikes.add(baseStrike.add(new BigDecimal("500.00")));
-                availableStrikes.add(baseStrike.add(new BigDecimal("1000.00")));
+            OrderType selectedOrderType = OrderType.BUY; // Default
+            if (orderTypeSelection == 2) {
+                selectedOrderType = OrderType.SELL;
             }
 
-            System.out.println("\nSelect Strike Price:");
-            for (int i = 0; i < availableStrikes.size(); i++) {
-                System.out.println((i + 1) + ". " + availableStrikes.get(i));
-            }
-            System.out.print("Enter your choice (1-" + availableStrikes.size() + "): ");
-            int strikeChoice = Integer.parseInt(scanner.nextLine().trim());
-            BigDecimal selectedStrike = availableStrikes.get(strikeChoice - 1);
-            System.out.println("Selected strike price: " + selectedStrike);
-
-            // 5. ENTER QUANTITY (LOTS)
-            System.out.print("\nEnter Quantity (Lots): ");
+            // 4. SELECT QUANTITY (LOTS)
+            System.out.print("\nEnter quantity (lots): ");
             int quantity = Integer.parseInt(scanner.nextLine().trim());
+            if (quantity <= 0) {
+                System.out.println("Quantity must be positive. Setting to 1 lot.");
+                quantity = 1;
+            }
 
-            // 6. ENTER PRICE
-            System.out.print("\nEnter Target Premium (must be greater than 0, recommended: 500): ");
-            BigDecimal price = new BigDecimal(scanner.nextLine().trim());
+            // 5. SET PRICE (TARGET PREMIUM)
+            System.out.print("\nEnter target premium: ");
+            BigDecimal price;
+            try {
+                price = new BigDecimal(scanner.nextLine().trim());
+            } catch (NumberFormatException e) {
+                System.out.println("Invalid price format. Setting to default value of 500.");
+                price = new BigDecimal("500");
+            }
 
-            // Ensure premium is not zero
             if (price.compareTo(BigDecimal.ZERO) <= 0) {
                 System.out.println("Target premium must be greater than 0. Setting to default value of 500.");
                 price = new BigDecimal("500");
@@ -618,13 +575,13 @@ public class Main {
             }
 
             // 9. CREATE ORDER
-            OrderScheduleParams params = OrderScheduleParams.builder()
+            OrderScheduleParams params = OrderScheduleParams
+                    .builderWithDefaults(appContext.getService(ConfigurationManager.class))
                     .indexSymbol(selectedIndex)
                     .expiryDate(selectedExpiry)
                     .targetPremium(price)
                     .lots(quantity)
                     .executionTime(executionDateTime)
-                    .threshold(5.0) // Default threshold
                     .orderType(selectedOrderType)
                     .stopLossEnabled(stopLossEnabled)
                     .hedgingEnabled(hedgingEnabled)
@@ -640,9 +597,8 @@ public class Main {
             System.out.println("Index: " + selectedIndex);
             System.out.println("Expiry: " + selectedExpiry.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy (EEE)")));
             System.out.println("Order Type: " + selectedOrderType);
-            System.out.println("Strike Price: " + selectedStrike);
             System.out.println("Quantity: " + quantity + " lots");
-            System.out.println("Price: " + price);
+            System.out.println("Target Premium: " + price);
             System.out.println(
                     "Execution Time: " + executionDateTime.format(DateTimeFormatter.ofPattern("dd-MMM-yyyy HH:mm:ss")));
             System.out.println("Stop Loss Enabled: " + stopLossEnabled);
@@ -653,7 +609,6 @@ public class Main {
 
         } catch (Exception e) {
             System.out.println("Error creating order: " + e.getMessage());
-            LOGGER.log(Level.WARNING, "Error in order creation", e);
         }
     }
 
@@ -709,7 +664,6 @@ public class Main {
                 // Ignore
             }
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "Error printing index prices", e);
             System.out.println("Could not fetch index prices: " + e.getMessage());
         }
     }
@@ -734,7 +688,6 @@ public class Main {
             System.out.println("You can now select from the latest available expiry dates when placing orders.");
         } catch (Exception e) {
             System.out.println("Error refreshing instruments: " + e.getMessage());
-            LOGGER.log(Level.WARNING, "Error refreshing instruments", e);
         }
     }
 
@@ -961,7 +914,6 @@ public class Main {
 
         } catch (Exception e) {
             System.out.println("\nERROR during system test: " + e.getMessage());
-            LOGGER.log(Level.SEVERE, "Error during system test", e);
         }
 
         pressEnterToContinue(scanner);
