@@ -28,6 +28,7 @@ D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderStatusChange
 D:\OptionTrading\src\main\java\com\optiontrading\service\option\OptionChainService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderHistoryRepository.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\position\WatchedPosition.java
+D:\OptionTrading\src\main\java\com\optiontrading\service\position\event\PositionUpdatedEvent.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\market\MarketDataService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\position\PositionWatchlistService.java
 D:\OptionTrading\src\main\java\com\optiontrading\service\order\OrderRepository.java

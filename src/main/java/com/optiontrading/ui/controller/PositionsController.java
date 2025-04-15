@@ -12,6 +12,8 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.layout.GridPane;
+import javafx.geometry.Insets;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -22,6 +24,7 @@ import java.util.Timer;
 import java.util.TimerTask;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Optional;
 
 /**
  * Controller for the positions panel UI
@@ -69,6 +72,8 @@ public class PositionsController {
     private Button editPositionButton;
     @FXML
     private Button closePositionButton;
+    @FXML
+    private Button deletePositionButton;
 
     @FXML
     private Label detailInstrument;
@@ -398,8 +403,89 @@ public class PositionsController {
      */
     private void handleEditPosition(PositionViewModel position) {
         if (position != null) {
-            // TODO: Implement edit position dialog
-            System.out.println("Edit position: " + position.getPosition().getId());
+            WatchedPosition pos = position.getPosition();
+
+            // Create dialog
+            Dialog<ButtonType> dialog = new Dialog<>();
+            dialog.setTitle("Edit Position");
+            dialog.setHeaderText("Edit position: " + pos.getInstrument().getTradingSymbol());
+
+            // Set dialog buttons
+            dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+
+            // Create form layout
+            GridPane grid = new GridPane();
+            grid.setHgap(10);
+            grid.setVgap(10);
+            grid.setPadding(new Insets(20, 150, 10, 10));
+
+            // Stop Loss field
+            TextField stopLossField = new TextField();
+            if (pos.getStopLoss() != null) {
+                stopLossField.setText(pos.getStopLoss().toString());
+            }
+            grid.add(new Label("Stop Loss:"), 0, 0);
+            grid.add(stopLossField, 1, 0);
+
+            // Target field
+            TextField targetField = new TextField();
+            if (pos.getTarget() != null) {
+                targetField.setText(pos.getTarget().toString());
+            }
+            grid.add(new Label("Target:"), 0, 1);
+            grid.add(targetField, 1, 1);
+
+            // Move SL to cost checkbox
+            CheckBox moveSlToCostCheckbox = new CheckBox("Move stop loss to cost when in profit");
+            moveSlToCostCheckbox.setSelected(pos.isMoveToBreakeven());
+            grid.add(moveSlToCostCheckbox, 0, 2, 2, 1);
+
+            // Trailing SL checkbox
+            CheckBox trailingSlCheckbox = new CheckBox("Enable trailing stop loss");
+            trailingSlCheckbox.setSelected(pos.isTrailingStopLoss());
+            grid.add(trailingSlCheckbox, 0, 3, 2, 1);
+
+            dialog.getDialogPane().setContent(grid);
+
+            // Handle result
+            Optional<ButtonType> result = dialog.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                try {
+                    // Parse inputs
+                    BigDecimal stopLoss = null;
+                    BigDecimal target = null;
+
+                    if (!stopLossField.getText().trim().isEmpty()) {
+                        stopLoss = new BigDecimal(stopLossField.getText().trim());
+                    }
+
+                    if (!targetField.getText().trim().isEmpty()) {
+                        target = new BigDecimal(targetField.getText().trim());
+                    }
+
+                    boolean moveSlToCost = moveSlToCostCheckbox.isSelected();
+                    boolean trailingSl = trailingSlCheckbox.isSelected();
+
+                    // Update position through service
+                    // Note: Implementation needed in PositionWatchlistService
+                    positionService.updatePosition(
+                            pos.getId(),
+                            stopLoss,
+                            target,
+                            moveSlToCost,
+                            trailingSl);
+
+                    // Refresh data
+                    refreshData();
+
+                } catch (NumberFormatException e) {
+                    Alert alert = new Alert(Alert.AlertType.ERROR);
+                    alert.setTitle("Invalid Input");
+                    alert.setHeaderText("Invalid numeric input");
+                    alert.setContentText("Please enter valid numbers for stop loss and target.");
+                    alert.showAndWait();
+                }
+            }
         }
     }
 
@@ -408,8 +494,92 @@ public class PositionsController {
      */
     private void handleClosePosition(PositionViewModel position) {
         if (position != null) {
-            // TODO: Implement close position confirmation and execution
-            System.out.println("Close position: " + position.getPosition().getId());
+            WatchedPosition pos = position.getPosition();
+
+            // Show confirmation dialog
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Close Position");
+            alert.setHeaderText("Close position: " + pos.getInstrument().getTradingSymbol());
+            alert.setContentText(
+                    "Are you sure you want to close this position? This will place a market order to close your position.");
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                // Close the position with reason
+                boolean success = positionService.closePosition(pos.getId(), "Manual close from UI");
+
+                if (success) {
+                    // Show success message
+                    Alert successAlert = new Alert(Alert.AlertType.INFORMATION);
+                    successAlert.setTitle("Position Closed");
+                    successAlert.setHeaderText("Position closed successfully");
+                    successAlert.setContentText("Position has been closed with a market order.");
+                    successAlert.showAndWait();
+
+                    // Refresh data
+                    refreshData();
+                } else {
+                    // Show error message
+                    Alert errorAlert = new Alert(Alert.AlertType.ERROR);
+                    errorAlert.setTitle("Error Closing Position");
+                    errorAlert.setHeaderText("Failed to close position");
+                    errorAlert
+                            .setContentText("There was an error closing the position. Please check logs for details.");
+                    errorAlert.showAndWait();
+                }
+            }
+        }
+    }
+
+    /**
+     * Handle delete position button click
+     */
+    @FXML
+    private void handleDeletePosition() {
+        PositionViewModel selectedPosition = positionsTable.getSelectionModel().getSelectedItem();
+        if (selectedPosition != null) {
+            handleDeletePosition(selectedPosition);
+        }
+    }
+
+    /**
+     * Handle delete position for a specific position
+     */
+    private void handleDeletePosition(PositionViewModel position) {
+        if (position != null) {
+            WatchedPosition pos = position.getPosition();
+
+            // Show confirmation dialog
+            Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
+            alert.setTitle("Delete Position");
+            alert.setHeaderText("Delete position: " + pos.getInstrument().getTradingSymbol());
+            alert.setContentText(
+                    "Are you sure you want to delete this position from the watchlist? This will not close any actual positions with your broker.");
+
+            Optional<ButtonType> result = alert.showAndWait();
+            if (result.isPresent() && result.get() == ButtonType.OK) {
+                // Remove the position
+                WatchedPosition removed = positionService.removePosition(pos.getId());
+
+                if (removed != null) {
+                    // Show success message
+                    Alert successAlert = new Alert(Alert.AlertType.INFORMATION);
+                    successAlert.setTitle("Position Deleted");
+                    successAlert.setHeaderText("Position removed from watchlist");
+                    successAlert.setContentText("Position has been removed from the watchlist.");
+                    successAlert.showAndWait();
+
+                    // Refresh data
+                    refreshData();
+                } else {
+                    // Show error message
+                    Alert errorAlert = new Alert(Alert.AlertType.ERROR);
+                    errorAlert.setTitle("Error Deleting Position");
+                    errorAlert.setHeaderText("Failed to delete position");
+                    errorAlert.setContentText("There was an error removing the position from the watchlist.");
+                    errorAlert.showAndWait();
+                }
+            }
         }
     }
 
@@ -488,6 +658,7 @@ public class PositionsController {
         // Enable/disable buttons based on selection
         editPositionButton.setDisable(!hasSelection);
         closePositionButton.setDisable(!hasSelection);
+        deletePositionButton.setDisable(!hasSelection);
 
         if (hasSelection) {
             WatchedPosition pos = position.getPosition();

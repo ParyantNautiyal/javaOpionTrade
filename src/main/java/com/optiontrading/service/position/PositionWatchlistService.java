@@ -6,6 +6,7 @@ import com.optiontrading.service.market.MarketDataService;
 import com.optiontrading.service.market.MarketDataSubscriber;
 import com.optiontrading.service.model.Instrument;
 import com.optiontrading.service.model.OrderType;
+import com.optiontrading.service.position.event.PositionUpdatedEvent;
 import com.optiontrading.service.trading.TradingService;
 import com.google.inject.Inject;
 
@@ -878,5 +879,46 @@ public class PositionWatchlistService implements MarketDataSubscriber {
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Error refreshing position prices", e);
         }
+    }
+
+    /**
+     * Update a position's properties
+     * 
+     * @param positionId   the position ID to update
+     * @param stopLoss     the new stop loss price (or null to remove)
+     * @param target       the new target price (or null to remove)
+     * @param moveSlToCost whether to move stop loss to cost
+     * @param trailingSl   whether to enable trailing stop loss
+     * @return true if position was updated successfully
+     */
+    public boolean updatePosition(String positionId, BigDecimal stopLoss, BigDecimal target,
+            boolean moveSlToCost, boolean trailingSl) {
+
+        WatchedPosition position = positions.get(positionId);
+
+        if (position == null) {
+            LOGGER.warning("Position with ID " + positionId + " not found for updating");
+            return false;
+        }
+
+        LOGGER.info("Updating position " + positionId +
+                " - Stop Loss: " + stopLoss +
+                " - Target: " + target +
+                " - Move SL to Cost: " + moveSlToCost +
+                " - Trailing SL: " + trailingSl);
+
+        // Update position properties
+        position.setStopLoss(stopLoss);
+        position.setTarget(target);
+        position.setMoveSlToCost(moveSlToCost);
+        position.setTrailingSl(trailingSl);
+
+        // Save to repository
+        positionRepository.savePosition(position);
+
+        // Publish event
+        eventBus.publishAsync(new PositionUpdatedEvent(position));
+
+        return true;
     }
 }

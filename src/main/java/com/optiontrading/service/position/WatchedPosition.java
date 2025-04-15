@@ -497,6 +497,60 @@ public class WatchedPosition implements Serializable {
     }
 
     /**
+     * Set the stop loss percentage
+     * 
+     * @param stopLossPercentage the stop loss percentage
+     */
+    public void setStopLossPercentage(BigDecimal stopLossPercentage) {
+        this.stopLossPercentage = stopLossPercentage;
+    }
+
+    /**
+     * Set the move to breakeven flag
+     * 
+     * @param moveToBreakeven whether to move stop loss to breakeven when in profit
+     */
+    public void setMoveSlToCost(boolean moveToBreakeven) {
+        this.moveToBreakeven = moveToBreakeven;
+    }
+
+    /**
+     * Set the trailing stop loss flag
+     * 
+     * @param trailingStopLoss whether to enable trailing stop loss
+     */
+    public void setTrailingSl(boolean trailingStopLoss) {
+        this.trailingStopLoss = trailingStopLoss;
+    }
+
+    /**
+     * Set the trailing distance
+     * 
+     * @param trailingDistance the trailing distance
+     */
+    public void setTrailingDistance(BigDecimal trailingDistance) {
+        this.trailingDistance = trailingDistance;
+    }
+
+    /**
+     * Set the stop loss
+     * 
+     * @param stopLoss the stop loss price
+     */
+    public void setStopLoss(BigDecimal stopLoss) {
+        this.currentStopPrice = stopLoss;
+    }
+
+    /**
+     * Set the target price
+     * 
+     * @param target the target price
+     */
+    public void setTarget(BigDecimal target) {
+        this.triggerPrice = target;
+    }
+
+    /**
      * Builder for WatchedPosition
      */
     public static class Builder {

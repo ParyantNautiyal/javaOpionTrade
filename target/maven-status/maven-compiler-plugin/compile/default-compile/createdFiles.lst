@@ -43,6 +43,7 @@ com\optiontrading\service\order\OrderLoggerService$2.class
 com\optiontrading\service\order\OrderLoggerService$8.class
 com\optiontrading\resources\CacheManager$CacheEntry.class
 com\optiontrading\service\trading\OrderFailedEvent.class
+com\optiontrading\service\position\event\PositionUpdatedEvent.class
 com\optiontrading\service\order\OrderCreatedEvent.class
 com\optiontrading\service\auth\KiteAuthService$ApiCredentialsUpdatedEvent.class
 com\optiontrading\service\model\OrderHistoryEntry.class
